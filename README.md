@@ -6,16 +6,19 @@
 
 In multi-agent systems, a supervisor agent often needs to decide which specialized sub-agent or API tool to invoke to solve a specific user prompt. Traditionally, this is done using hardcoded heuristics, prompt engineering, or raw LLM classification logits. None of these handle real-time uncertainty or feedback loops well.
 
-**BayesBrain** treats tool routing as a **Contextual Multi-Armed Bandit** using **Thompson Sampling** with exact Beta-Binomial conjugate updates. It dynamically learns the most reliable tool or configuration under semantic context clusters, adapting in real time to API failures, drift, or changing developer requirements.
+**BayesBrain** treats tool routing as a **Contextual Multi-Armed Bandit** using **Thompson Sampling** (or **Upper Confidence Bound**) with exact conjugate updates. It dynamically learns the most reliable tool or configuration under semantic context clusters, adapting in real time to API failures, drift, or changing developer requirements.
 
 ---
 
-## The Core Math Engine (Beta-Binomial Conjugate Pair)
+## The Core Math Engine
 
-To prevent runtime latency, BayesBrain avoids heavy Markov Chain Monte Carlo (MCMC) sampling (e.g., PyMC or Stan). Instead, it uses exact closed-form Beta-Binomial updates:
+To prevent runtime latency, BayesBrain avoids heavy Markov Chain Monte Carlo (MCMC) sampling (e.g., PyMC or Stan). Instead, it uses exact closed-form updates and supports two main mathematical modes: **Context Clustering** (Beta-Binomial) and **Linear Contextual Bandits** (LinTS / LinUCB).
 
-1. **Belief Representation**: Each tool $i$ is modeled as a Beta distribution: $\text{Beta}(\alpha_i, \beta_i)$.
-2. **Prior (Initial State)**: $\alpha_i = 1.0, \beta_i = 1.0$ (Uniform flat distribution representing total uncertainty).
+### 1. Context Clustering Mode (Beta-Binomial Conjugate Pair)
+Each tool $i$ in a context cluster is modeled as a Beta distribution representing the belief of its success probability:
+
+1. **Belief Representation**: $\theta_i \sim \text{Beta}(\alpha_i, \beta_i)$.
+2. **Prior (Initial State)**: $\alpha_i = 1.0, \beta_i = 1.0$ (Uniform flat prior representing total uncertainty).
 3. **Thompson Sampling**: For each candidate tool, sample a success probability:
    $$\theta_i \sim \text{Beta}(\alpha_i, \beta_i)$$
    Select the tool with the highest sampled probability:
@@ -24,19 +27,24 @@ To prevent runtime latency, BayesBrain avoids heavy Markov Chain Monte Carlo (MC
    - **Success**: $\alpha_i \leftarrow \alpha_i + \text{reward}$
    - **Failure**: $\beta_i \leftarrow \beta_i + (1 - \text{reward})$
 
-### Handling Non-Stationary Environments (Drifting APIs)
+#### Handling Non-Stationary Environments (Drifting APIs)
 If an API starts failing or degrades over time, historical successes should not dominate the routing indefinitely. BayesBrain applies an exponential decay factor $\gamma \in (0, 1]$ on historical updates prior to adding new rewards:
-$$\alpha_t = \gamma \alpha_{t-1} + \text{reward}$$
-$$\beta_t = \gamma \beta_{t-1} + (1 - \text{reward})$$
-
-This ensures the router rapidly adapts to outages, API updates, or regressions.
-
-### Preventing Parameter Over-Decay (Beta Bimodality)
-To prevent the Beta parameters from decaying indefinitely under continuous discount cycles (which could cause the distribution parameters to drop below $1.0$, resulting in a U-shaped bimodal distribution that breaks Thompson Sampling exploration), both $\alpha$ and $\beta$ are strictly clamped to a lower-bound of `1.0`:
 $$\alpha_t = \max(1.0, \gamma \alpha_{t-1} + \text{reward})$$
 $$\beta_t = \max(1.0, \gamma \beta_{t-1} + (1 - \text{reward}))$$
 
-This regularizes the bandit beliefs and is natively implemented across all storage backends (including within Redis Lua scripts).
+Both parameters are strictly clamped to a lower-bound of `1.0` to prevent the distribution from becoming U-shaped/bimodal, which stabilizes Thompson Sampling exploration.
+
+---
+
+### 2. Linear Contextual Bandits Mode (LinTS & LinUCB)
+Instead of partitioning tasks into discrete clusters, the linear modes learn a linear relationship between the continuous task embedding space and the expected reward. Let the text embedding vector be $x \in \mathbb{R}^d$. We augment it with a bias term $x' = [x, 1.0]$ to learn prior success rates as linear offsets.
+
+* **Linear Thompson Sampling (LinTS)**: Models the success probability parameter $\theta_a$ for tool $a$ as a linear combination of features, $\theta_a = x'^T w_a$, where weights $w_a$ are sampled from the posterior distribution $\mathcal{N}(\hat{w}_a, v^2 B_a^{-1})$.
+* **Linear UCB (LinUCB)**: Selects the tool maximizing the upper confidence bound of the expected reward:
+  $$a^* = \arg\max_a \left(x'^T \hat{w}_a + \alpha \sqrt{x'^T B_a^{-1} x'}\right)$$
+  where $\hat{w}_a$ is the ridge regression estimate, $B_a$ is the precision matrix, and $\alpha$ (or $v$) is the exploration weight.
+* **L2 Regularization ($\lambda$)**: Performs ridge regression shrinkage on parameters.
+* **Diagonal Covariance Approximation**: Optional diagonal approximation ($O(d)$ runtime/storage) to avoid full matrix inversion ($O(d^3)$) during high-throughput execution.
 
 ---
 
@@ -52,9 +60,9 @@ BayesBrain is decoupled from your execution layer, acting as a lightweight inter
                               │ (Retrieve Context Key)
                               ▼
                   [ Bayesian Tool Router ]
-                   ├─ Thompson Sampling
+                   ├─ Thompson Sampling / UCB
                    ├─ Fallback Key Hashing
-                   └─ Fetch (α, β) from Cache/DB
+                   └─ Fetch (α, β) or (B_a, f_a)
                               │
             ┌────────────────┴────────────────┐
             ▼                                 ▼
@@ -66,7 +74,7 @@ BayesBrain is decoupled from your execution layer, acting as a lightweight inter
                              │ (Success / Fail / Reward)
                              ▼
                  [ Decoupled Telemetry Hook ]
-                             │ (Update α, β in DB)
+                             │ (Update parameters in DB)
                              ▼
                       [ Storage Cache ] (Redis, SQLite, In-Memory)
 ```
@@ -85,24 +93,25 @@ uv pip install bayes-brain
 uv pip install "bayes-brain[local-ml]"
 ```
 
+For advanced features, ensure the following database dependencies are satisfied:
+* `sqlite-vec` (Required for SQLite vector stores)
+* `aiosqlite` (Required for asynchronous SQLite operations)
+* `redis` (Required for Redis cache storage)
+* `httpx` (Required for API-based embedders)
+
 ---
 
 ## Quick Start
 
-### 1. Initialize the Router with a Storage Backend and Embedder
-
-You can use the built-in [GeminiEmbedder](file:///Users/sam/Locals%20Only/bayes-brain/src/bayes_brain/embeddings.py#L62-L138) or [OpenAIEmbedder](file:///Users/sam/Locals%20Only/bayes-brain/src/bayes_brain/embeddings.py#L140-L245) for lightweight, API-driven embeddings without downloading heavy local models.
+### Synchronous API
 
 ```python
 from bayes_brain.router import BayesianToolRouter
 from bayes_brain.storage import SQLiteStorage
 from bayes_brain.embeddings import GeminiEmbedder
 
-# SQLiteStorage supports concurrent WAL mode and busy timeouts out of the box
+# SQLiteStorage supports concurrent WAL mode and busy timeouts
 storage = SQLiteStorage("bayes_cache.db")
-
-# Automatically loads API key from GEMINI_API_KEY environment variable.
-# Falls back to standard urllib requests if no SDK client is provided.
 embedder = GeminiEmbedder(model_name="models/text-embedding-004")
 
 router = BayesianToolRouter(
@@ -111,13 +120,7 @@ router = BayesianToolRouter(
     decay_factor=0.95,
     fallback_tool="fallback_llm"
 )
-```
 
-### 2. Route and Feedback
-
-BayesBrain supports binary feedback (`success=True/False`) as well as continuous rewards (e.g. utility rates in `[0.0, 1.0]`) to support fine-grained feedback loops.
-
-```python
 context_prompt = "Summarize the latest AI research papers"
 candidates = ["arxiv_rag", "google_search", "fallback_llm"]
 
@@ -128,94 +131,160 @@ chosen_tool = router.route(
 )
 print(f"Routed task to: {chosen_tool}")
 
-# 2. Execute and collect utility feedback
-try:
-    # Run your tool logic ...
-    utility_score = 0.85  # e.g., success rate or response quality score
-    success = True
-except Exception:
-    utility_score = 0.0
-    success = False
-
-# 3. Provide feedback (accepts success and/or continuous reward)
+# 2. Provide feedback (binary success or continuous reward)
 router.feedback(
     context_text=context_prompt,
     tool_name=chosen_tool,
-    success=success,
-    reward=utility_score
+    success=True,
+    reward=1.0
 )
 ```
 
-### 3. Asymmetric Telemetry with Trace IDs
+### Asynchronous API
 
-For asynchronous non-blocking workflows, generate trace IDs during routing and apply feedback later:
+For asynchronous, non-blocking workflows in web applications (FastAPI, FastMCP) or multi-agent environments:
 
 ```python
-# Route task and receive a unique session trace identifier
-chosen_tool, trace_id = router.route_with_trace(
-    context_text=context_prompt,
-    candidate_tools=candidates
-)
+import asyncio
+from bayes_brain.router import AsyncBayesianToolRouter
+from bayes_brain.storage import AsyncSQLiteStorage
+from bayes_brain.embeddings import GeminiEmbedder
 
-# ... dispatch execution to background workers ...
+async def main():
+    storage = AsyncSQLiteStorage("bayes_cache.db")
+    embedder = GeminiEmbedder(model_name="models/text-embedding-004")
 
-# Update parameters asynchronously using the trace identifier
-router.feedback_by_trace(trace_id=trace_id, reward=1.0)
+    router = AsyncBayesianToolRouter(
+        storage=storage,
+        embedder=embedder,
+        decay_factor=0.95,
+        fallback_tool="fallback_llm"
+    )
+
+    context_prompt = "Summarize the latest AI research papers"
+    candidates = ["arxiv_rag", "google_search", "fallback_llm"]
+
+    # 1. Async Route
+    chosen_tool = await router.aroute(
+        context_text=context_prompt,
+        candidate_tools=candidates
+    )
+    print(f"Routed task to: {chosen_tool}")
+
+    # 2. Async Feedback
+    await router.afeedback(
+        context_text=context_prompt,
+        tool_name=chosen_tool,
+        success=True,
+        reward=1.0
+    )
+
+asyncio.run(main())
 ```
 
 ---
 
 ## Core Features & Advanced Operations
 
-### 🔌 Pluggable Vector Stores (`VectorStoreProtocol`)
-You can inject custom lightweight vector stores (like Chroma or FAISS) by implementing the [VectorStoreProtocol](file:///Users/sam/Locals%20Only/bayes-brain/src/bayes_brain/embeddings.py#L17-L32):
+### 🔌 Persistent, Native Vector Storage (`sqlite-vec`)
+To avoid loading all context vectors into memory, BayesBrain supports native database-level vector indexing and search via the `sqlite-vec` extension:
+* **Sync Store**: [SQLiteVectorStore](file:///Users/sam/Locals%20Only/bayes-brain/src/bayes_brain/embeddings.py#L670-L789)
+* **Async Store**: [AsyncSQLiteVectorStore](file:///Users/sam/Locals%20Only/bayes-brain/src/bayes_brain/embeddings.py#L877-L980)
 
 ```python
-from typing import Sequence, Optional
-from bayes_brain.embeddings import VectorStoreProtocol
+from bayes_brain.embeddings import SQLiteVectorStore
 
-class MyChromaStore(VectorStoreProtocol):
-    def add_context(self, context_key: str, vector: Sequence[float]) -> None:
-        # Write to your index
-        pass
-
-    def get_nearest_context(
-        self, query_vector: Sequence[float], similarity_threshold: float = 0.8
-    ) -> Optional[str]:
-        # Return nearest context key from your index
-        return "some_context_key"
+# Creates a vec0 virtual table for cosine-distance vector matches
+vector_store = SQLiteVectorStore(
+    db_path="vectors.db",
+    dimension=384,
+    table_name="vec_context_store"
+)
 
 router = BayesianToolRouter(
     storage=storage,
     embedder=embedder,
-    vector_store=MyChromaStore()
+    vector_store=vector_store
 )
 ```
-* **Incremental Caching**: Storage backends ([InMemoryStorage](file:///Users/sam/Locals%20Only/bayes-brain/src/bayes_brain/storage.py#L85-L145), [SQLiteStorage](file:///Users/sam/Locals%20Only/bayes-brain/src/bayes_brain/storage.py#L146-L322), and [RedisStorage](file:///Users/sam/Locals%20Only/bayes-brain/src/bayes_brain/storage.py#L323-L448)) implement incremental `load_all_vectors` and `save_vector` methods to perform fine-grained writes.
-* **Auto-Migration**: Upon first load, legacy monolithic `"vector_context_store"` JSON structures are automatically migrated to incremental, query-friendly database columns.
 
-### 🛡️ Fail-Safe Routing & Telemetry Hooks
-All entry points in [BayesianToolRouter](file:///Users/sam/Locals%20Only/bayes-brain/src/bayes_brain/router.py#L16-L32) are wrapped in fail-safe try-except blocks. If storage connections fail, vector indexes corrupt, or sampling throws exceptions, the router silently handles the issue by returning the candidate default or `fallback_tool`.
-
-You can configure a `telemetry_hook` to alert your developer channels or monitoring tools on failures:
+### 📈 Contextual Bandit Configuration (LinTS / LinUCB)
+Switch from discrete clustering to linear regression-based generalization to handle continuous feature spaces:
 
 ```python
-def my_telemetry_callback(context_text: str, error: Exception, metadata: dict):
-    print(f"Telemetry Alert: Routing error on context '{context_text}': {error}")
-    # Forward warning to Sentry, Datadog, etc.
+router = BayesianToolRouter(
+    storage=storage,
+    embedder=embedder,
+    mode="lints",                 # "clustering", "lints", or "linucb"
+    exploration_weight=0.5,       # v in LinTS, alpha in UCB
+    lambda_val=1.0,               # L2 regularization parameter
+    diagonal_covariance=True,      # O(d) diagonal approximation (highly recommended for performance)
+)
+```
+
+### 📦 Batch/Bulk API Support
+Avoid the N-roundtrip database/network bottleneck when processing large telemetry bundles or task lists:
+
+```python
+contexts = ["Compile source code", "Format file contents"]
+candidate_tools = ["compiler_tool", "linter_tool"]
+
+# Batch Routing
+chosen_tools = router.route_batch(contexts, candidate_tools)
+
+# Batch Feedback
+feedbacks = [
+    {"context_text": "Compile source code", "tool_name": "compiler_tool", "success": True, "reward": 1.0},
+    {"context_text": "Format file contents", "tool_name": "linter_tool", "success": False, "reward": 0.0}
+]
+router.feedback_batch(feedbacks)
+```
+* **Database Optimization**: SQLite backends chunk parameters into sizes of 200 and wrap requests in an immediate transaction (`executemany`). Redis backends execute Lua scripts inside pipeline blocks.
+
+### 🛡️ Tamper-Proof Signed Trace IDs
+To prevent client-side reward-poisoning and tampering attacks in decoupled or asynchronous setups, BayesBrain signs trace IDs using an HMAC-SHA256 signature.
+
+```python
+router = BayesianToolRouter(
+    storage=storage,
+    embedder=embedder,
+    secret_key="my-app-secure-hmac-key" # Auto-generates random 32-byte key if omitted
+)
+
+chosen_tool, trace_id = router.route_with_trace(context_text, candidate_tools)
+# trace_id is formatted as 'payload_b64..signature_hex'
+
+# Automatically validates signature before updating parameters; raises ValueError if tampered
+router.feedback_by_trace(trace_id=trace_id, reward=1.0)
+```
+
+### 🎯 Context-Specific Priors (Warm Starts)
+Developers can override global priors and seed prior beliefs tailored to specific tasks or domains using prompt regexes, reference contexts, or precomputed embedding vectors.
+
+```python
+contextual_priors = [
+    {
+        "pattern": r"(?i)compile|build|code",
+        "priors": {"compiler_tool": (10.0, 1.0), "search_tool": (1.0, 5.0)}
+    },
+    {
+        "reference_context": "Retrieve medical and scientific paper abstracts",
+        "similarity_threshold": 0.85,
+        "priors": {"pubmed_rag": (20.0, 1.0)}
+    }
+]
 
 router = BayesianToolRouter(
     storage=storage,
     embedder=embedder,
-    fallback_tool="fallback_llm",
-    telemetry_hook=my_telemetry_callback
+    contextual_priors=contextual_priors
 )
 ```
 
 ### ⚡ High-Performance SQLite WAL Mode
-The [SQLiteStorage](file:///Users/sam/Locals%20Only/bayes-brain/src/bayes_brain/storage.py#L146-L322) backend runs with:
+The [SQLiteStorage](file:///Users/sam/Locals%20Only/bayes-brain/src/bayes_brain/storage.py#L387) and [AsyncSQLiteStorage](file:///Users/sam/Locals%20Only/bayes-brain/src/bayes_brain/storage.py#L1642) backends initialize with:
 * **Write-Ahead Logging (WAL)**: `PRAGMA journal_mode=WAL;` to dramatically improve read/write concurrency.
-* **Busy Timeout**: `PRAGMA busy_timeout=5000;` to gracefully handle concurrent write contentions.
+* **Busy Timeout**: `PRAGMA busy_timeout=5000;` to gracefully handle concurrent lock contentions.
 
 ### 🔏 Robust Hashed Exact Matching Fallbacks
 When operating without an embedder, or if API embedder requests fail, the router normalizes the context (stripping whitespace) and hashes the string using SHA-256 (prefixed with `hash_`). This guarantees a short, fixed-length context key and prevents key matching fragility due to whitespace differences.
@@ -226,7 +295,7 @@ When operating without an embedder, or if API embedder requests fail, the router
 
 Optimize tool selection in Claude Code or other MCP hosts by registering a Meta-Tool to handle dynamic routing, alongside administrative tools to manage and monitor bandit beliefs.
 
-You can configure and expose these endpoints using [create_mcp_server](file:///Users/sam/Locals%20Only/bayes-brain/src/bayes_brain/mcp_server.py#L67-L249):
+You can configure and expose these endpoints using [create_mcp_server](file:///Users/sam/Locals%20Only/bayes-brain/src/bayes_brain/mcp_server.py#L375):
 
 ```python
 from bayes_brain.mcp_server import create_mcp_server
@@ -243,10 +312,17 @@ mcp = create_mcp_server(
 
 | Endpoint | Type | Description |
 | :--- | :--- | :--- |
-| `execute_adaptive_action` | `Tool` | Thompson sampling routes incoming tasks to the best sub-tool and automatically applies execution feedback. |
-| `get_tool_beliefs` | `Tool` | Retrieve current posterior $\alpha$ and $\beta$ beliefs for all tools under a given context. |
-| `reset_beliefs` | `Tool` | Reset the beliefs back to the default prior `(1.0, 1.0)` for a tool under a context. |
-| `bayes://metrics` | `Resource` | Exposes a Markdown Dashboard with context clusters, expected success rates, and raw JSON data. |
+| `execute_adaptive_action` | `Tool` | Thompson sampling/UCB routes incoming tasks to the best sub-tool and automatically applies execution feedback. |
+| `get_tool_beliefs` | `Tool` | Retrieve current posterior $\alpha$ and $\beta$ beliefs for all tools under a given context (resolving context-specific priors). |
+| `reset_beliefs` | `Tool` | Reset the beliefs back to the default prior for a tool under a context. |
+| `bayes://metrics` | `Resource` | Exposes a Markdown Dashboard with context clusters, expected success rates, and raw telemetry metrics. |
+
+### Visual Diagnostics on the Metrics Dashboard
+The `bayes://metrics` dashboard exposes rich, live visuals to monitor routing decisions and distributions in real time:
+* **ASCII Sparklines**: Displays inline unicode block characters (e.g. ` ▂▃▅▇█▆▄▂`) representing the shape of the $\text{Beta}(\alpha, \beta)$ probability distribution next to each tool in the context clusters table.
+* **Beta PDF SVG Charts**: Renders custom inline SVG charts mapping probability density curves for all candidate tools under each context cluster (utilizing SciPy's Beta stats model), complete with colors, legends, labels, and coordinate grids.
+* **Recent Executions Log**: Lists the 20 most recent routing executions chronologically, detailing the Trace ID, Timestamp, Context Cluster, Selected Tool, and Reward feedback outcome.
+* **History MA10 SVG Line Chart**: Renders a chronological line plot tracking the running moving average success rates of candidate tools over time.
 
 ---
 
