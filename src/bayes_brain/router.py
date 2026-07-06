@@ -1,10 +1,12 @@
 import asyncio
 import base64
 import hashlib
+import hmac
 import json
 import logging
+import os
 import uuid
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
 import numpy as np
 
@@ -46,6 +48,7 @@ class BayesianToolRouter:
         exploration_weight: float = 1.0,
         lambda_val: float = 1.0,
         diagonal_covariance: bool = False,
+        secret_key: Optional[Union[str, bytes]] = None,
     ) -> None:
         """
         Initialize the BayesianToolRouter.
@@ -61,6 +64,7 @@ class BayesianToolRouter:
             exploration_weight: exploration factor (v for lints, alpha for linucb).
             lambda_val: L2 regularization coefficient.
             diagonal_covariance: whether to use diagonal covariance approximation.
+            secret_key: Secret key used to sign and verify trace IDs via HMAC.
         """
         self.storage = storage or InMemoryStorage()
         self.embedder = embedder
@@ -73,6 +77,19 @@ class BayesianToolRouter:
         self.exploration_weight = exploration_weight
         self.lambda_val = lambda_val
         self.diagonal_covariance = diagonal_covariance
+
+        # Determine secret key for signing trace IDs
+        if secret_key is not None:
+            if isinstance(secret_key, str):
+                self.secret_key = secret_key.encode("utf-8")
+            else:
+                self.secret_key = secret_key
+        else:
+            env_key = os.environ.get("BAYES_BRAIN_SECRET_KEY")
+            if env_key:
+                self.secret_key = env_key.encode("utf-8")
+            else:
+                self.secret_key = os.urandom(32)
 
         if self.mode in ("lints", "linucb") and self.embedder is None:
             raise ValueError("Linear bandit modes ('lints', 'linucb') require a ContextEmbedder.")
@@ -163,19 +180,37 @@ class BayesianToolRouter:
         return new_key
 
     def _generate_trace_id(self, context_key: str, tool_name: str) -> str:
-        """Encodes context key and tool name into a stateless token."""
+        """Encodes context key and tool name into a stateless token and signs it using HMAC."""
         payload = {
             "ctx": context_key,
             "tool": tool_name,
             "nonce": uuid.uuid4().hex,
         }
         json_bytes = json.dumps(payload).encode("utf-8")
-        return base64.urlsafe_b64encode(json_bytes).decode("utf-8")
+        payload_b64 = base64.urlsafe_b64encode(json_bytes).decode("utf-8")
+        
+        # Compute HMAC signature over the payload
+        signature = hmac.new(self.secret_key, payload_b64.encode("utf-8"), hashlib.sha256).digest()
+        signature_b64 = base64.urlsafe_b64encode(signature).decode("utf-8")
+        
+        return f"{payload_b64}.{signature_b64}"
 
     def _decode_trace_id(self, trace_id: str) -> Tuple[str, str]:
-        """Decodes context key and tool name from a trace ID token."""
+        """Decodes and verifies context key and tool name from a signed trace ID token."""
         try:
-            json_bytes = base64.urlsafe_b64decode(trace_id.encode("utf-8"))
+            if "." not in trace_id:
+                raise ValueError("Missing signature in trace ID")
+            
+            payload_b64, signature_b64 = trace_id.rsplit(".", 1)
+            
+            # Verify signature
+            expected_sig = hmac.new(self.secret_key, payload_b64.encode("utf-8"), hashlib.sha256).digest()
+            expected_sig_b64 = base64.urlsafe_b64encode(expected_sig).decode("utf-8")
+            
+            if not hmac.compare_digest(signature_b64.encode("utf-8"), expected_sig_b64.encode("utf-8")):
+                raise ValueError("Invalid trace ID signature")
+                
+            json_bytes = base64.urlsafe_b64decode(payload_b64.encode("utf-8"))
             payload = json.loads(json_bytes.decode("utf-8"))
             return payload["ctx"], payload["tool"]
         except Exception as e:
@@ -881,6 +916,7 @@ class AsyncBayesianToolRouter:
         exploration_weight: float = 1.0,
         lambda_val: float = 1.0,
         diagonal_covariance: bool = False,
+        secret_key: Optional[Union[str, bytes]] = None,
     ) -> None:
         """
         Initialize the AsyncBayesianToolRouter.
@@ -896,6 +932,19 @@ class AsyncBayesianToolRouter:
         self.exploration_weight = exploration_weight
         self.lambda_val = lambda_val
         self.diagonal_covariance = diagonal_covariance
+
+        # Determine secret key for signing trace IDs
+        if secret_key is not None:
+            if isinstance(secret_key, str):
+                self.secret_key = secret_key.encode("utf-8")
+            else:
+                self.secret_key = secret_key
+        else:
+            env_key = os.environ.get("BAYES_BRAIN_SECRET_KEY")
+            if env_key:
+                self.secret_key = env_key.encode("utf-8")
+            else:
+                self.secret_key = os.urandom(32)
 
         if self.mode in ("lints", "linucb") and self.embedder is None:
             raise ValueError("Linear bandit modes ('lints', 'linucb') require a ContextEmbedder/AsyncContextEmbedder.")
@@ -987,17 +1036,37 @@ class AsyncBayesianToolRouter:
         return new_key
 
     def _generate_trace_id(self, context_key: str, tool_name: str) -> str:
+        """Encodes context key and tool name into a stateless token and signs it using HMAC."""
         payload = {
             "ctx": context_key,
             "tool": tool_name,
             "nonce": uuid.uuid4().hex,
         }
         json_bytes = json.dumps(payload).encode("utf-8")
-        return base64.urlsafe_b64encode(json_bytes).decode("utf-8")
+        payload_b64 = base64.urlsafe_b64encode(json_bytes).decode("utf-8")
+        
+        # Compute HMAC signature over the payload
+        signature = hmac.new(self.secret_key, payload_b64.encode("utf-8"), hashlib.sha256).digest()
+        signature_b64 = base64.urlsafe_b64encode(signature).decode("utf-8")
+        
+        return f"{payload_b64}.{signature_b64}"
 
     def _decode_trace_id(self, trace_id: str) -> Tuple[str, str]:
+        """Decodes and verifies context key and tool name from a signed trace ID token."""
         try:
-            json_bytes = base64.urlsafe_b64decode(trace_id.encode("utf-8"))
+            if "." not in trace_id:
+                raise ValueError("Missing signature in trace ID")
+            
+            payload_b64, signature_b64 = trace_id.rsplit(".", 1)
+            
+            # Verify signature
+            expected_sig = hmac.new(self.secret_key, payload_b64.encode("utf-8"), hashlib.sha256).digest()
+            expected_sig_b64 = base64.urlsafe_b64encode(expected_sig).decode("utf-8")
+            
+            if not hmac.compare_digest(signature_b64.encode("utf-8"), expected_sig_b64.encode("utf-8")):
+                raise ValueError("Invalid trace ID signature")
+                
+            json_bytes = base64.urlsafe_b64decode(payload_b64.encode("utf-8"))
             payload = json.loads(json_bytes.decode("utf-8"))
             return payload["ctx"], payload["tool"]
         except Exception as e:

@@ -377,3 +377,55 @@ def test_feedback_fallback_on_failure(monkeypatch):
     assert telemetry_events[2][0] == "get_tool_beliefs_failure"
 
 
+def test_router_signed_trace_ids():
+    import pytest
+    storage = InMemoryStorage()
+    
+    # 1. Custom secret key (str)
+    router = BayesianToolRouter(storage=storage, secret_key="my_super_secret_key")
+    chosen, trace_id = router.route_with_trace("query", ["tool_a"])
+    assert "." in trace_id
+    
+    # Decode and verify it succeeds
+    ctx_key, tool_name = router._decode_trace_id(trace_id)
+    assert tool_name == "tool_a"
+    
+    # Verify with another router using the same key succeeds
+    router2 = BayesianToolRouter(storage=storage, secret_key="my_super_secret_key")
+    ctx_key2, tool_name2 = router2._decode_trace_id(trace_id)
+    assert tool_name2 == "tool_a"
+    
+    # Verify with another router using a different key fails
+    router3 = BayesianToolRouter(storage=storage, secret_key="different_secret_key")
+    with pytest.raises(ValueError, match="Invalid or corrupted trace ID"):
+        router3._decode_trace_id(trace_id)
+        
+    # Tampering with payload fails
+    payload_part, sig_part = trace_id.split(".")
+    import json
+    import base64
+    payload_json = json.loads(base64.urlsafe_b64decode(payload_part).decode("utf-8"))
+    payload_json["tool"] = "tool_b"  # forged
+    tampered_payload_b64 = base64.urlsafe_b64encode(json.dumps(payload_json).encode("utf-8")).decode("utf-8")
+    tampered_trace_id = f"{tampered_payload_b64}.{sig_part}"
+    
+    with pytest.raises(ValueError, match="Invalid or corrupted trace ID"):
+        router._decode_trace_id(tampered_trace_id)
+        
+    # Missing signature separator fails
+    with pytest.raises(ValueError, match="Invalid or corrupted trace ID"):
+        router._decode_trace_id(payload_part)
+        
+    # Random key auto-generation works
+    router_random1 = BayesianToolRouter(storage=storage)
+    router_random2 = BayesianToolRouter(storage=storage)
+    
+    _, trace_id_rand = router_random1.route_with_trace("query", ["tool_a"])
+    # Decoding with same router succeeds
+    assert router_random1._decode_trace_id(trace_id_rand)[1] == "tool_a"
+    # Decoding with different router (with different random key) fails
+    with pytest.raises(ValueError):
+        router_random2._decode_trace_id(trace_id_rand)
+
+
+
