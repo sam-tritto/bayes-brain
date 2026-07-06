@@ -2,7 +2,7 @@ import abc
 import json
 import sqlite3
 import threading
-from typing import Any, Optional, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 class BaseStorage(abc.ABC):
     """Abstract base class defining the storage backend interface for BayesBrain."""
@@ -50,6 +50,36 @@ class BaseStorage(abc.ABC):
         """Store metadata key-value pair."""
         pass
 
+    def load_all_vectors(self) -> Dict[str, List[float]]:
+        """
+        Retrieve all stored context vectors from the backend.
+        Fallback implementation uses metadata for backwards compatibility.
+        """
+        try:
+            serialized = self.load_metadata("vector_context_store")
+            if serialized:
+                data = json.loads(serialized)
+                return {k: list(v) for k, v in data.items()}
+        except Exception:
+            pass
+        return {}
+
+    def save_vector(self, context_key: str, vector: Sequence[float]) -> None:
+        """
+        Store a single context vector incrementally.
+        Fallback implementation updates the entire metadata JSON string.
+        """
+        try:
+            serialized = self.load_metadata("vector_context_store")
+            if serialized:
+                data = json.loads(serialized)
+            else:
+                data = {}
+            data[context_key] = list(vector)
+            self.save_metadata("vector_context_store", json.dumps(data))
+        except Exception:
+            pass
+
 
 class InMemoryStorage(BaseStorage):
     """
@@ -60,6 +90,7 @@ class InMemoryStorage(BaseStorage):
     def __init__(self) -> None:
         self._data: dict[Tuple[str, str], Tuple[float, float]] = {}
         self._metadata: dict[str, str] = {}
+        self._vectors: dict[str, List[float]] = {}
         self._lock = threading.Lock()
 
     def get_tool_params(self, context_key: str, tool_name: str) -> Tuple[float, float]:
@@ -93,6 +124,23 @@ class InMemoryStorage(BaseStorage):
         with self._lock:
             self._metadata[key] = value
 
+    def load_all_vectors(self) -> Dict[str, List[float]]:
+        with self._lock:
+            if not self._vectors:
+                # Backwards compatibility migration check
+                serialized = self._metadata.get("vector_context_store")
+                if serialized:
+                    try:
+                        data = json.loads(serialized)
+                        self._vectors = {k: list(v) for k, v in data.items()}
+                    except Exception:
+                        pass
+            return dict(self._vectors)
+
+    def save_vector(self, context_key: str, vector: Sequence[float]) -> None:
+        with self._lock:
+            self._vectors[context_key] = list(vector)
+
 
 class SQLiteStorage(BaseStorage):
     """
@@ -102,7 +150,7 @@ class SQLiteStorage(BaseStorage):
 
     def __init__(self, db_path: str = "bayes_brain.db") -> None:
         self.db_path = db_path
-        # Initialize the database table if it does not exist
+        # Initialize the database tables if they do not exist
         conn = sqlite3.connect(self.db_path)
         try:
             with conn:
@@ -122,6 +170,14 @@ class SQLiteStorage(BaseStorage):
                     CREATE TABLE IF NOT EXISTS metadata (
                         key TEXT PRIMARY KEY,
                         val TEXT
+                    )
+                    """
+                )
+                conn.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS context_vectors (
+                        context_key TEXT PRIMARY KEY,
+                        vector TEXT
                     )
                     """
                 )
@@ -223,6 +279,50 @@ class SQLiteStorage(BaseStorage):
                 (key, value),
             )
 
+    def load_all_vectors(self) -> Dict[str, List[float]]:
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        cursor.execute("SELECT context_key, vector FROM context_vectors")
+        rows = cursor.fetchall()
+
+        if not rows:
+            # Migration check: see if there's legacy metadata
+            serialized = self.load_metadata("vector_context_store")
+            if serialized:
+                try:
+                    data = json.loads(serialized)
+                    with conn:
+                        for k, v in data.items():
+                            conn.execute(
+                                """
+                                INSERT OR IGNORE INTO context_vectors (context_key, vector)
+                                VALUES (?, ?)
+                                """,
+                                (k, json.dumps(v)),
+                            )
+                    # Query again
+                    cursor.execute("SELECT context_key, vector FROM context_vectors")
+                    rows = cursor.fetchall()
+                except Exception:
+                    pass
+
+        res = {}
+        for row in rows:
+            res[row[0]] = json.loads(row[1])
+        return res
+
+    def save_vector(self, context_key: str, vector: Sequence[float]) -> None:
+        conn = self._get_conn()
+        with conn:
+            conn.execute(
+                """
+                INSERT INTO context_vectors (context_key, vector)
+                VALUES (?, ?)
+                ON CONFLICT(context_key) DO UPDATE SET vector = excluded.vector
+                """,
+                (context_key, json.dumps(list(vector))),
+            )
+
 
 class RedisStorage(BaseStorage):
     """
@@ -310,3 +410,31 @@ class RedisStorage(BaseStorage):
 
     def save_metadata(self, key: str, value: str) -> None:
         self.client.set(f"{self.prefix}metadata:{key}", value)
+
+    def load_all_vectors(self) -> Dict[str, List[float]]:
+        vectors_hash = self.client.hgetall(f"{self.prefix}context_vectors")
+        if not vectors_hash:
+            # Check for legacy metadata to migrate
+            serialized = self.load_metadata("vector_context_store")
+            if serialized:
+                try:
+                    data = json.loads(serialized)
+                    mapping = {k: json.dumps(v) for k, v in data.items()}
+                    if mapping:
+                        self.client.hset(f"{self.prefix}context_vectors", mapping=mapping)
+                    return data
+                except Exception:
+                    pass
+        res = {}
+        for k, v in vectors_hash.items():
+            key_str = k.decode("utf-8") if isinstance(k, bytes) else str(k)
+            val_str = v.decode("utf-8") if isinstance(v, bytes) else str(v)
+            res[key_str] = json.loads(val_str)
+        return res
+
+    def save_vector(self, context_key: str, vector: Sequence[float]) -> None:
+        self.client.hset(
+            f"{self.prefix}context_vectors",
+            key=context_key,
+            value=json.dumps(list(vector))
+        )

@@ -1,4 +1,4 @@
-from typing import Sequence
+from typing import Optional, Sequence
 
 import pytest
 
@@ -113,3 +113,41 @@ def test_router_priors_seeding():
     a_rel, b_rel = storage.get_tool_params("some_task", "highly_reliable")
     assert a_rel == 90.0
     assert b_rel == 10.0
+
+
+class CustomMemoryVectorStore:
+    def __init__(self) -> None:
+        self.vectors = {}
+
+    def add_context(self, context_key: str, vector: Sequence[float]) -> None:
+        self.vectors[context_key] = vector
+
+    def get_nearest_context(
+        self, query_vector: Sequence[float], similarity_threshold: float = 0.8
+    ) -> Optional[str]:
+        if self.vectors:
+            return list(self.vectors.keys())[0]
+        return None
+
+
+def test_router_with_custom_vector_store():
+    storage = InMemoryStorage()
+    embedder = MockEmbedder()
+    custom_store = CustomMemoryVectorStore()
+    
+    router = BayesianToolRouter(
+        storage=storage,
+        embedder=embedder,
+        vector_store=custom_store
+    )
+    
+    # Initially empty
+    assert len(custom_store.vectors) == 0
+    
+    # Resolving context text creates a new cluster context key
+    context_key = router._resolve_context_key("some search query")
+    assert context_key.startswith("ctx_")
+    
+    # Verify custom_store has the new context key stored
+    assert context_key in custom_store.vectors
+    assert custom_store.get_nearest_context([1.0, 0.0]) == context_key

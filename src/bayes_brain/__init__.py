@@ -2,6 +2,7 @@ from bayes_brain.embeddings import (
     ContextEmbedder,
     LocalSentenceTransformerEmbedder,
     VectorContextStore,
+    VectorStoreProtocol,
 )
 from bayes_brain.mcp_server import create_mcp_server
 from bayes_brain.router import BayesianToolRouter
@@ -21,5 +22,6 @@ __all__ = [
     "ContextEmbedder",
     "LocalSentenceTransformerEmbedder",
     "VectorContextStore",
+    "VectorStoreProtocol",
     "create_mcp_server",
 ]

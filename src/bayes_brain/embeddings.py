@@ -10,6 +10,23 @@ class ContextEmbedder(Protocol):
         ...
 
 
+class VectorStoreProtocol(Protocol):
+    """Protocol defining the interface for context vector storage and search."""
+
+    def add_context(self, context_key: str, vector: Sequence[float]) -> None:
+        """Add or update a context vector in the index."""
+        ...
+
+    def get_nearest_context(
+        self, query_vector: Sequence[float], similarity_threshold: float = 0.8
+    ) -> Optional[str]:
+        """
+        Find the context_key whose stored vector is closest to query_vector,
+        provided the cosine similarity is above the threshold.
+        """
+        ...
+
+
 class LocalSentenceTransformerEmbedder:
     """
     Batteries-included embedder using sentence-transformers.

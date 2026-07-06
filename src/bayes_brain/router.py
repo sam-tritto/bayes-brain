@@ -5,7 +5,7 @@ from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 
-from bayes_brain.embeddings import ContextEmbedder, VectorContextStore
+from bayes_brain.embeddings import ContextEmbedder, VectorContextStore, VectorStoreProtocol
 from bayes_brain.storage import BaseStorage, InMemoryStorage
 
 
@@ -22,6 +22,7 @@ class BayesianToolRouter:
         decay_factor: float = 1.0,
         similarity_threshold: float = 0.8,
         priors: Optional[Dict[str, Tuple[float, float]]] = None,
+        vector_store: Optional[VectorStoreProtocol] = None,
     ) -> None:
         """
         Initialize the BayesianToolRouter.
@@ -32,6 +33,7 @@ class BayesianToolRouter:
             decay_factor: Exponential decay / discount factor (gamma) in (0, 1]. Defaults to 1.0.
             similarity_threshold: Cosine similarity threshold for mapping embeddings to contexts.
             priors: Preseeded alpha/beta priors for tools to mitigate cold start (e.g. {"tool": (10, 2)}).
+            vector_store: Optional custom VectorStoreProtocol implementation.
         """
         self.storage = storage or InMemoryStorage()
         self.embedder = embedder
@@ -42,24 +44,33 @@ class BayesianToolRouter:
         self.similarity_threshold = similarity_threshold
         self.priors = priors or {}
 
-        self._context_store = VectorContextStore()
-        self._load_context_store()
+        self._custom_vector_store_active = vector_store is not None
+        if vector_store is not None:
+            self._context_store = vector_store
+        else:
+            self._context_store = VectorContextStore()
+            self._load_context_store()
 
     def _load_context_store(self) -> None:
         """Attempt to restore the VectorContextStore from the storage backend."""
+        if self._custom_vector_store_active:
+            return
         try:
-            serialized = self.storage.load_metadata("vector_context_store")
-            if serialized:
-                self._context_store = VectorContextStore.from_json(serialized)
+            vectors = self.storage.load_all_vectors()
+            for key, vector in vectors.items():
+                self._context_store.add_context(key, vector)
         except Exception:
             # Fall back to empty context store if retrieval or decoding fails
             pass
 
     def _save_context_store(self) -> None:
         """Persist the VectorContextStore to the storage backend."""
+        if self._custom_vector_store_active:
+            return
         try:
-            serialized = self._context_store.to_json()
-            self.storage.save_metadata("vector_context_store", serialized)
+            if hasattr(self._context_store, "_contexts"):
+                for key, vector in self._context_store._contexts.items():
+                    self.storage.save_vector(key, vector)
         except Exception:
             pass
 
@@ -90,7 +101,8 @@ class BayesianToolRouter:
         # No match found: spawn a new context cluster and save it
         new_key = f"ctx_{uuid.uuid4().hex}"
         self._context_store.add_context(new_key, vector)
-        self._save_context_store()
+        if not self._custom_vector_store_active:
+            self.storage.save_vector(new_key, vector)
         return new_key
 
     def _generate_trace_id(self, context_key: str, tool_name: str) -> str:

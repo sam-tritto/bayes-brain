@@ -113,3 +113,85 @@ def test_redis_storage():
     
     storage.save_metadata("some_key", "new_val")
     mock_client.set.assert_called_with("bayes_brain:metadata:some_key", "new_val")
+
+
+def test_sqlite_storage_incremental_and_migration():
+    import json
+    with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as tmp:
+        db_path = tmp.name
+    
+    try:
+        # 1. Preseed with legacy metadata to simulate a legacy DB
+        conn = sqlite3.connect(db_path)
+        with conn:
+            conn.execute("CREATE TABLE IF NOT EXISTS metadata (key TEXT PRIMARY KEY, val TEXT)")
+            legacy_data = {"ctx_legacy_1": [0.1, 0.2], "ctx_legacy_2": [0.3, 0.4]}
+            conn.execute(
+                "INSERT INTO metadata (key, val) VALUES (?, ?)",
+                ("vector_context_store", json.dumps(legacy_data))
+            )
+        conn.close()
+
+        # 2. Instantiate SQLiteStorage and call load_all_vectors.
+        # This should trigger migration and retrieve the migrated vectors.
+        storage = SQLiteStorage(db_path)
+        vectors = storage.load_all_vectors()
+        assert vectors == legacy_data
+
+        # 3. Test saving a new vector incrementally
+        storage.save_vector("ctx_new", [0.5, 0.6])
+        
+        # Verify the new vector is in the loaded set
+        updated_vectors = storage.load_all_vectors()
+        assert updated_vectors["ctx_legacy_1"] == [0.1, 0.2]
+        assert updated_vectors["ctx_legacy_2"] == [0.3, 0.4]
+        assert updated_vectors["ctx_new"] == [0.5, 0.6]
+
+        # Verify the database table 'context_vectors' actually contains the rows
+        conn = sqlite3.connect(db_path)
+        cursor = conn.cursor()
+        cursor.execute("SELECT context_key, vector FROM context_vectors WHERE context_key = ?", ("ctx_new",))
+        row = cursor.fetchone()
+        assert row is not None
+        assert json.loads(row[1]) == [0.5, 0.6]
+        conn.close()
+
+        storage.close()
+    finally:
+        if os.path.exists(db_path):
+            os.remove(db_path)
+
+
+def test_redis_storage_incremental_and_migration():
+    import json
+    mock_client = MagicMock()
+    
+    # Simulate empty context_vectors hash initially
+    # If hgetall is called on non-existent hash, it returns empty dict
+    mock_client.hgetall.return_value = {}
+    
+    # Setup legacy metadata return when requested
+    legacy_data = {"ctx_legacy_1": [0.5, 0.5]}
+    mock_client.get.side_effect = lambda key: {
+        "bayes_brain:metadata:vector_context_store": json.dumps(legacy_data).encode("utf-8")
+    }.get(key, None)
+
+    storage = RedisStorage(mock_client, prefix="bayes_brain:")
+
+    # 1. Trigger load_all_vectors, which should fallback and migrate
+    vectors = storage.load_all_vectors()
+    assert vectors == legacy_data
+    
+    # Verify migration writes to the context_vectors hash
+    mock_client.hset.assert_any_call(
+        "bayes_brain:context_vectors",
+        mapping={"ctx_legacy_1": json.dumps([0.5, 0.5])}
+    )
+
+    # 2. Test saving vector incrementally
+    storage.save_vector("ctx_new", [0.9, 0.1])
+    mock_client.hset.assert_called_with(
+        "bayes_brain:context_vectors",
+        key="ctx_new",
+        value=json.dumps([0.9, 0.1])
+    )
