@@ -246,3 +246,134 @@ def test_continuous_rewards():
     router.feedback("continuous_task", "tool_a", success=True, reward=1.0)
     router.feedback("continuous_task", "tool_a", success=False, reward=0.0)
 
+
+def test_router_fallback_on_storage_failure(monkeypatch):
+    import numpy as np
+    storage = InMemoryStorage()
+    
+    # Mock storage to fail on get_tool_params
+    def mock_get_tool_params(context_key, tool_name):
+        raise RuntimeError("DB connection lost")
+    monkeypatch.setattr(storage, "get_tool_params", mock_get_tool_params)
+    
+    telemetry_events = []
+    def mock_telemetry(event, exc, ctx):
+        telemetry_events.append((event, exc, ctx))
+        
+    router = BayesianToolRouter(
+        storage=storage,
+        fallback_tool="fallback_tool",
+        telemetry_hook=mock_telemetry
+    )
+    
+    # Route with fallback_tool present in candidate list
+    chosen, trace_id = router.route_with_trace("query", ["tool_a", "fallback_tool"])
+    assert chosen == "fallback_tool"
+    assert trace_id is not None
+    assert len(telemetry_events) == 1
+    assert telemetry_events[0][0] == "route_failure"
+    assert isinstance(telemetry_events[0][1], RuntimeError)
+    assert telemetry_events[0][2]["context_text"] == "query"
+
+    # Route with fallback_tool NOT present in candidate list (should fall back to first candidate)
+    chosen_first, _ = router.route_with_trace("query", ["tool_a", "tool_b"])
+    assert chosen_first == "tool_a"
+
+
+def test_router_fallback_on_sampling_failure(monkeypatch):
+    import numpy as np
+    storage = InMemoryStorage()
+    
+    # Mock numpy.random.beta to fail
+    def mock_beta(a, b):
+        raise ValueError("Sampling failed")
+    monkeypatch.setattr(np.random, "beta", mock_beta)
+    
+    telemetry_events = []
+    def mock_telemetry(event, exc, ctx):
+        telemetry_events.append((event, exc, ctx))
+        
+    router = BayesianToolRouter(
+        storage=storage,
+        telemetry_hook=mock_telemetry
+    )
+    
+    chosen, trace_id = router.route_with_trace("query", ["tool_a", "tool_b"])
+    assert chosen == "tool_a"
+    assert len(telemetry_events) == 1
+    assert telemetry_events[0][0] == "route_failure"
+
+
+def test_router_fallback_on_vector_store_failure():
+    class FailingVectorStore:
+        def add_context(self, context_key, vector):
+            pass
+        def get_nearest_context(self, query_vector, similarity_threshold):
+            raise RuntimeError("Index corrupted")
+
+    storage = InMemoryStorage()
+    embedder = MockEmbedder()
+    
+    telemetry_events = []
+    def mock_telemetry(event, exc, ctx):
+        telemetry_events.append((event, exc, ctx))
+        
+    router = BayesianToolRouter(
+        storage=storage,
+        embedder=embedder,
+        vector_store=FailingVectorStore(),
+        telemetry_hook=mock_telemetry
+    )
+    
+    chosen, trace_id = router.route_with_trace("query", ["tool_a", "tool_b"])
+    assert chosen == "tool_a"
+    assert len(telemetry_events) == 1
+    assert telemetry_events[0][0] == "route_failure"
+
+
+def test_feedback_fallback_on_failure(monkeypatch):
+    storage = InMemoryStorage()
+    
+    # Mock storage to fail on decay_and_update
+    def mock_decay_and_update(context_key, tool_name, decay_factor, reward_val):
+        raise RuntimeError("Write failed")
+    monkeypatch.setattr(storage, "decay_and_update", mock_decay_and_update)
+    
+    telemetry_events = []
+    def mock_telemetry(event, exc, ctx):
+        telemetry_events.append((event, exc, ctx))
+        
+    router = BayesianToolRouter(
+        storage=storage,
+        telemetry_hook=mock_telemetry
+    )
+    
+    # 1. Test feedback fallback
+    alpha, beta = router.feedback("query", "tool_a", success=True)
+    assert alpha == 1.0
+    assert beta == 1.0
+    assert len(telemetry_events) == 1
+    assert telemetry_events[0][0] == "feedback_failure"
+    
+    # 2. Test feedback_by_trace fallback
+    alpha_by_trace, beta_by_trace = router.feedback_by_trace(
+        "eyJjdHgiOiAiZmFsbGJhY2tfY3R4IiwgInRvb2wiOiAic29tZV90b29sIiwgIm5vbmNlIjogIjEifQ==",
+        success=True
+    )
+    assert alpha_by_trace == 1.0
+    assert beta_by_trace == 1.0
+    assert len(telemetry_events) == 2
+    assert telemetry_events[1][0] == "feedback_by_trace_failure"
+
+    # 3. Test get_tool_beliefs fallback
+    def mock_get_tool_params(context_key, tool_name):
+        raise RuntimeError("Read failed")
+    monkeypatch.setattr(storage, "get_tool_params", mock_get_tool_params)
+    
+    alpha_beliefs, beta_beliefs = router.get_tool_beliefs("query", "tool_a")
+    assert alpha_beliefs == 1.0
+    assert beta_beliefs == 1.0
+    assert len(telemetry_events) == 3
+    assert telemetry_events[2][0] == "get_tool_beliefs_failure"
+
+

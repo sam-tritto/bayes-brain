@@ -3,7 +3,7 @@ import hashlib
 import json
 import logging
 import uuid
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import numpy as np
 
@@ -27,6 +27,8 @@ class BayesianToolRouter:
         similarity_threshold: float = 0.8,
         priors: Optional[Dict[str, Tuple[float, float]]] = None,
         vector_store: Optional[VectorStoreProtocol] = None,
+        fallback_tool: Optional[str] = None,
+        telemetry_hook: Optional[Callable[[str, Exception, Dict[str, Any]], None]] = None,
     ) -> None:
         """
         Initialize the BayesianToolRouter.
@@ -41,6 +43,8 @@ class BayesianToolRouter:
         """
         self.storage = storage or InMemoryStorage()
         self.embedder = embedder
+        self.fallback_tool = fallback_tool
+        self.telemetry_hook = telemetry_hook
         
         if embedder is None:
             logger.warning(
@@ -164,30 +168,55 @@ class BayesianToolRouter:
         if not candidate_tools:
             raise ValueError("Candidate tools list cannot be empty")
 
-        context_key = self._resolve_context_key(context_text)
-        best_tool = None
-        highest_sample = -1.0
+        try:
+            context_key = self._resolve_context_key(context_text)
+            best_tool = None
+            highest_sample = -1.0
 
-        for tool_name in candidate_tools:
-            alpha, beta = self.storage.get_tool_params(context_key, tool_name)
+            for tool_name in candidate_tools:
+                alpha, beta = self.storage.get_tool_params(context_key, tool_name)
 
-            # Check for seeded priors on cold start
-            if alpha == 1.0 and beta == 1.0 and tool_name in self.priors:
-                alpha, beta = self.priors[tool_name]
-                self.storage.update_tool_params(context_key, tool_name, alpha, beta)
+                # Check for seeded priors on cold start
+                if alpha == 1.0 and beta == 1.0 and tool_name in self.priors:
+                    alpha, beta = self.priors[tool_name]
+                    self.storage.update_tool_params(context_key, tool_name, alpha, beta)
 
-            # Sample belief matching beta-binomial posterior
-            sampled_score = np.random.beta(alpha, beta)
+                # Sample belief matching beta-binomial posterior
+                sampled_score = np.random.beta(alpha, beta)
 
-            if sampled_score > highest_sample:
-                highest_sample = sampled_score
-                best_tool = tool_name
+                if sampled_score > highest_sample:
+                    highest_sample = sampled_score
+                    best_tool = tool_name
 
-        if best_tool is None:
-            best_tool = candidate_tools[0]
+            if best_tool is None:
+                best_tool = candidate_tools[0]
 
-        trace_id = self._generate_trace_id(context_key, best_tool)
-        return best_tool, trace_id
+            trace_id = self._generate_trace_id(context_key, best_tool)
+            return best_tool, trace_id
+        except Exception as e:
+            logger.exception(
+                "BayesianToolRouter routing failed. Triggering fail-safe fallback."
+            )
+            if self.telemetry_hook:
+                try:
+                    self.telemetry_hook(
+                        "route_failure",
+                        e,
+                        {
+                            "context_text": context_text,
+                            "candidate_tools": candidate_tools,
+                        },
+                    )
+                except Exception as hook_err:
+                    logger.error(f"Telemetry hook failed: {hook_err}")
+
+            if self.fallback_tool and self.fallback_tool in candidate_tools:
+                fallback_choice = self.fallback_tool
+            else:
+                fallback_choice = candidate_tools[0]
+
+            fallback_trace_id = self._generate_trace_id("fallback_ctx", fallback_choice)
+            return fallback_choice, fallback_trace_id
 
     def feedback(
         self,
@@ -218,10 +247,28 @@ class BayesianToolRouter:
         else:
             reward_val = 1.0 if success else 0.0
 
-        context_key = self._resolve_context_key(context_text)
-        return self.storage.decay_and_update(
-            context_key, tool_name, self.decay_factor, reward_val
-        )
+        try:
+            context_key = self._resolve_context_key(context_text)
+            return self.storage.decay_and_update(
+                context_key, tool_name, self.decay_factor, reward_val
+            )
+        except Exception as e:
+            logger.exception("BayesianToolRouter feedback submission failed.")
+            if self.telemetry_hook:
+                try:
+                    self.telemetry_hook(
+                        "feedback_failure",
+                        e,
+                        {
+                            "context_text": context_text,
+                            "tool_name": tool_name,
+                            "success": success,
+                            "reward": reward,
+                        },
+                    )
+                except Exception as hook_err:
+                    logger.error(f"Telemetry hook failed: {hook_err}")
+            return 1.0, 1.0
 
     def feedback_by_trace(
         self,
@@ -252,14 +299,47 @@ class BayesianToolRouter:
         else:
             reward_val = 1.0 if success else 0.0
 
-        context_key, tool_name = self._decode_trace_id(trace_id)
-        return self.storage.decay_and_update(
-            context_key, tool_name, self.decay_factor, reward_val
-        )
+        try:
+            context_key, tool_name = self._decode_trace_id(trace_id)
+            return self.storage.decay_and_update(
+                context_key, tool_name, self.decay_factor, reward_val
+            )
+        except Exception as e:
+            logger.exception("BayesianToolRouter feedback by trace submission failed.")
+            if self.telemetry_hook:
+                try:
+                    self.telemetry_hook(
+                        "feedback_by_trace_failure",
+                        e,
+                        {
+                            "trace_id": trace_id,
+                            "success": success,
+                            "reward": reward,
+                        },
+                    )
+                except Exception as hook_err:
+                    logger.error(f"Telemetry hook failed: {hook_err}")
+            return 1.0, 1.0
 
     def get_tool_beliefs(self, context_text: str, tool_name: str) -> Tuple[float, float]:
         """
         Retrieve current posterior alpha and beta beliefs for a given context and tool.
         """
-        context_key = self._resolve_context_key(context_text)
-        return self.storage.get_tool_params(context_key, tool_name)
+        try:
+            context_key = self._resolve_context_key(context_text)
+            return self.storage.get_tool_params(context_key, tool_name)
+        except Exception as e:
+            logger.exception("BayesianToolRouter get_tool_beliefs failed.")
+            if self.telemetry_hook:
+                try:
+                    self.telemetry_hook(
+                        "get_tool_beliefs_failure",
+                        e,
+                        {
+                            "context_text": context_text,
+                            "tool_name": tool_name,
+                        },
+                    )
+                except Exception as hook_err:
+                    logger.error(f"Telemetry hook failed: {hook_err}")
+            return 1.0, 1.0
