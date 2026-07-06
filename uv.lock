@@ -69,7 +69,7 @@ wheels = [
 ]
 
 [[package]]
-name = "bayes-brain"
+name = "bayesian-cortex"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
