@@ -1,0 +1,312 @@
+import abc
+import json
+import sqlite3
+import threading
+from typing import Any, Optional, Tuple
+
+class BaseStorage(abc.ABC):
+    """Abstract base class defining the storage backend interface for BayesBrain."""
+
+    @abc.abstractmethod
+    def get_tool_params(self, context_key: str, tool_name: str) -> Tuple[float, float]:
+        """
+        Retrieve the (alpha, beta) posterior parameters for a tool under a given context.
+        Defaults to (1.0, 1.0) if not found.
+        """
+        pass
+
+    @abc.abstractmethod
+    def update_tool_params(
+        self, context_key: str, tool_name: str, alpha: float, beta: float
+    ) -> None:
+        """
+        Directly set the (alpha, beta) parameters for a tool under a given context.
+        """
+        pass
+
+    @abc.abstractmethod
+    def decay_and_update(
+        self, context_key: str, tool_name: str, decay_factor: float, reward: float
+    ) -> Tuple[float, float]:
+        """
+        Atomically decay the current parameters and add the reward.
+        alpha_new = alpha_old * decay_factor + reward
+        beta_new = beta_old * decay_factor + (1 - reward)
+        """
+        pass
+
+    @abc.abstractmethod
+    def close(self) -> None:
+        """Close any resources associated with the storage backend."""
+        pass
+
+    @abc.abstractmethod
+    def load_metadata(self, key: str) -> Optional[str]:
+        """Retrieve stored metadata for a given key, or None if not found."""
+        pass
+
+    @abc.abstractmethod
+    def save_metadata(self, key: str, value: str) -> None:
+        """Store metadata key-value pair."""
+        pass
+
+
+class InMemoryStorage(BaseStorage):
+    """
+    In-memory thread-safe implementation of BaseStorage.
+    Perfect for unit testing and ephemeral sessions.
+    """
+
+    def __init__(self) -> None:
+        self._data: dict[Tuple[str, str], Tuple[float, float]] = {}
+        self._metadata: dict[str, str] = {}
+        self._lock = threading.Lock()
+
+    def get_tool_params(self, context_key: str, tool_name: str) -> Tuple[float, float]:
+        with self._lock:
+            return self._data.get((context_key, tool_name), (1.0, 1.0))
+
+    def update_tool_params(
+        self, context_key: str, tool_name: str, alpha: float, beta: float
+    ) -> None:
+        with self._lock:
+            self._data[(context_key, tool_name)] = (alpha, beta)
+
+    def decay_and_update(
+        self, context_key: str, tool_name: str, decay_factor: float, reward: float
+    ) -> Tuple[float, float]:
+        with self._lock:
+            alpha, beta = self._data.get((context_key, tool_name), (1.0, 1.0))
+            new_alpha = alpha * decay_factor + reward
+            new_beta = beta * decay_factor + (1.0 - reward)
+            self._data[(context_key, tool_name)] = (new_alpha, new_beta)
+            return new_alpha, new_beta
+
+    def close(self) -> None:
+        pass
+
+    def load_metadata(self, key: str) -> Optional[str]:
+        with self._lock:
+            return self._metadata.get(key)
+
+    def save_metadata(self, key: str, value: str) -> None:
+        with self._lock:
+            self._metadata[key] = value
+
+
+class SQLiteStorage(BaseStorage):
+    """
+    SQLite-backed storage for persistent local storage with thread safety.
+    Guarantees atomic updates by utilizing BEGIN IMMEDIATE transactions.
+    """
+
+    def __init__(self, db_path: str = "bayes_brain.db") -> None:
+        self.db_path = db_path
+        # Initialize the database table if it does not exist
+        conn = sqlite3.connect(self.db_path)
+        try:
+            with conn:
+                conn.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS tool_params (
+                        context_key TEXT,
+                        tool_name TEXT,
+                        alpha REAL,
+                        beta REAL,
+                        PRIMARY KEY (context_key, tool_name)
+                    )
+                    """
+                )
+                conn.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS metadata (
+                        key TEXT PRIMARY KEY,
+                        val TEXT
+                    )
+                    """
+                )
+        finally:
+            conn.close()
+        
+        self._local = threading.local()
+
+    def _get_conn(self) -> sqlite3.Connection:
+        if not hasattr(self._local, "conn"):
+            self._local.conn = sqlite3.connect(self.db_path)
+        return self._local.conn
+
+    def get_tool_params(self, context_key: str, tool_name: str) -> Tuple[float, float]:
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT alpha, beta FROM tool_params WHERE context_key = ? AND tool_name = ?",
+            (context_key, tool_name),
+        )
+        row = cursor.fetchone()
+        if row is not None:
+            return float(row[0]), float(row[1])
+        return 1.0, 1.0
+
+    def update_tool_params(
+        self, context_key: str, tool_name: str, alpha: float, beta: float
+    ) -> None:
+        conn = self._get_conn()
+        with conn:
+            conn.execute(
+                """
+                INSERT INTO tool_params (context_key, tool_name, alpha, beta)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(context_key, tool_name) DO UPDATE SET
+                    alpha = excluded.alpha,
+                    beta = excluded.beta
+                """,
+                (context_key, tool_name, alpha, beta),
+            )
+
+    def decay_and_update(
+        self, context_key: str, tool_name: str, decay_factor: float, reward: float
+    ) -> Tuple[float, float]:
+        conn = self._get_conn()
+        # Use BEGIN IMMEDIATE to lock the database and ensure atomicity in multi-threaded contexts
+        cursor = conn.cursor()
+        try:
+            cursor.execute("BEGIN IMMEDIATE")
+            cursor.execute(
+                "SELECT alpha, beta FROM tool_params WHERE context_key = ? AND tool_name = ?",
+                (context_key, tool_name),
+            )
+            row = cursor.fetchone()
+            if row is not None:
+                alpha, beta = float(row[0]), float(row[1])
+            else:
+                alpha, beta = 1.0, 1.0
+
+            new_alpha = alpha * decay_factor + reward
+            new_beta = beta * decay_factor + (1.0 - reward)
+
+            cursor.execute(
+                """
+                INSERT INTO tool_params (context_key, tool_name, alpha, beta)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(context_key, tool_name) DO UPDATE SET
+                    alpha = excluded.alpha,
+                    beta = excluded.beta
+                """,
+                (context_key, tool_name, new_alpha, new_beta),
+            )
+            conn.commit()
+            return new_alpha, new_beta
+        except Exception as e:
+            conn.rollback()
+            raise e
+
+    def close(self) -> None:
+        if hasattr(self._local, "conn"):
+            self._local.conn.close()
+            delattr(self._local, "conn")
+
+    def load_metadata(self, key: str) -> Optional[str]:
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        cursor.execute("SELECT val FROM metadata WHERE key = ?", (key,))
+        row = cursor.fetchone()
+        return row[0] if row is not None else None
+
+    def save_metadata(self, key: str, value: str) -> None:
+        conn = self._get_conn()
+        with conn:
+            conn.execute(
+                """
+                INSERT INTO metadata (key, val) VALUES (?, ?)
+                ON CONFLICT(key) DO UPDATE SET val = excluded.val
+                """,
+                (key, value),
+            )
+
+
+class RedisStorage(BaseStorage):
+    """
+    Redis-backed storage backend for distributed setups.
+    Uses Redis hashes and a Lua script to perform atomic multiply-and-add decay updates.
+    """
+
+    LUA_DECAY_UPDATE = """
+    local key = KEYS[1]
+    local field_alpha = ARGV[1]
+    local field_beta = ARGV[2]
+    local decay = tonumber(ARGV[3])
+    local reward = tonumber(ARGV[4])
+    local reward_fail = 1.0 - reward
+
+    local alpha = redis.call('HGET', key, field_alpha)
+    local beta = redis.call('HGET', key, field_beta)
+
+    if not alpha then alpha = 1.0 else alpha = tonumber(alpha) end
+    if not beta then beta = 1.0 else beta = tonumber(beta) end
+
+    local new_alpha = alpha * decay + reward
+    local new_beta = beta * decay + reward_fail
+
+    redis.call('HSET', key, field_alpha, tostring(new_alpha), field_beta, tostring(new_beta))
+    return {tostring(new_alpha), tostring(new_beta)}
+    """
+
+    def __init__(self, redis_client: Any, prefix: str = "bayes_brain:") -> None:
+        """
+        Initialize with a pre-configured redis-py Client.
+        """
+        self.client = redis_client
+        self.prefix = prefix
+        self._script = self.client.register_script(self.LUA_DECAY_UPDATE)
+
+    def _get_key(self, context_key: str) -> str:
+        return f"{self.prefix}{context_key}"
+
+    def get_tool_params(self, context_key: str, tool_name: str) -> Tuple[float, float]:
+        key = self._get_key(context_key)
+        alpha_val = self.client.hget(key, f"{tool_name}:alpha")
+        beta_val = self.client.hget(key, f"{tool_name}:beta")
+
+        alpha = float(alpha_val) if alpha_val is not None else 1.0
+        beta = float(beta_val) if beta_val is not None else 1.0
+        return alpha, beta
+
+    def update_tool_params(
+        self, context_key: str, tool_name: str, alpha: float, beta: float
+    ) -> None:
+        key = self._get_key(context_key)
+        self.client.hset(
+            key,
+            mapping={
+                f"{tool_name}:alpha": str(alpha),
+                f"{tool_name}:beta": str(beta),
+            },
+        )
+
+    def decay_and_update(
+        self, context_key: str, tool_name: str, decay_factor: float, reward: float
+    ) -> Tuple[float, float]:
+        key = self._get_key(context_key)
+        res = self._script(
+            keys=[key],
+            args=[
+                f"{tool_name}:alpha",
+                f"{tool_name}:beta",
+                str(decay_factor),
+                str(reward),
+            ],
+        )
+        return float(res[0]), float(res[1])
+
+    def close(self) -> None:
+        # We don't close the client as it is passed from outside
+        pass
+
+    def load_metadata(self, key: str) -> Optional[str]:
+        val = self.client.get(f"{self.prefix}metadata:{key}")
+        if val is None:
+            return None
+        return val.decode("utf-8") if isinstance(val, bytes) else str(val)
+
+    def save_metadata(self, key: str, value: str) -> None:
+        self.client.set(f"{self.prefix}metadata:{key}", value)

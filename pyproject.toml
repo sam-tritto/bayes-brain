@@ -1,0 +1,29 @@
+[project]
+name = "bayes-brain"
+version = "0.1.0"
+description = "Dynamic Tool Routing via Bayesian Bandits"
+readme = "README.md"
+authors = [
+    { name = "sam-tritto", email = "59342606+sam-tritto@users.noreply.github.com" }
+]
+requires-python = ">=3.11"
+dependencies = [
+    "numpy>=1.24.0",
+    "scipy>=1.10.0",
+    "redis>=5.0.0",
+    "mcp>=0.1.0",
+]
+
+[project.optional-dependencies]
+local-ml = [
+    "sentence-transformers>=2.2.0",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=7.0.0",
+]
+
+[build-system]
+requires = ["uv_build>=0.8.17,<0.9.0"]
+build-backend = "uv_build"
