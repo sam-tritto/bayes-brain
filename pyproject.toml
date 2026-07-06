@@ -1,10 +1,10 @@
 [project]
-name = "bayesian-cortex"
+name = "bayesian_cortex"
 version = "0.1.0"
 description = "Dynamic Agent Routing via Contextual Bayesian Bandits"
 readme = "README.md"
 authors = [
-    { name = "sam-tritto", email = "59342606+sam-tritto@users.noreply.github.com" }
+    { name = "Sam Tritto", email = "59342606+sam-tritto@users.noreply.github.com" }
 ]
 requires-python = ">=3.11"
 dependencies = [
