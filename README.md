@@ -1,15 +1,14 @@
 <p align="center">
   <img src="assets/logo.png" alt="BayesBrain Logo" width="400">
 </p>
-
 # BayesBrain: Dynamic Candidate Routing via Bayesian Bandits
 
-In multi-agent systems, a supervisor agent often needs to decide which specialized sub-agent, API candidate, or prompt workflow (skill) to invoke to solve a specific user task. Traditionally, this is done using hardcoded heuristics, prompt engineering, or raw LLM classification logits. None of these handle real-time uncertainty or silent failures well.
+In intelligent agent systems, routing decisions represent the core runtime engine. **BayesBrain** treats routing as a **Contextual Multi-Armed Bandit** using **Thompson Sampling** (or **Upper Confidence Bound**) with exact conjugate updates. It dynamically learns the most reliable option under semantic context clusters, adapting in real time to failures, hallucinations, or shifting environment dynamics.
 
-**BayesBrain** treats both candidate and skill routing as a **Contextual Multi-Armed Bandit** using **Thompson Sampling** (or **Upper Confidence Bound**) with exact conjugate updates. It dynamically learns the most reliable candidate or prompt candidate under semantic context clusters, adapting in real time to API failures, silent prompt hallucinations, or changing environment dynamics.
-
-* **Candidates (The Hands)**: Deterministic, discrete, and input-output bound (e.g. SQL queries, API hits, or running code).
-* **Skills (The Cognitive Engines)**: Heuristic, prompt-heavy, and workflow-bound (e.g. a specialized system prompt, custom Standard Operating Procedure, or chain-of-thought routing loop). Since skills fail silently rather than throwing errors, posterior-guided Bayesian routing is vital for mapping and selecting the most reliable prompt variant over time.
+BayesBrain completes what AI architects call the **"Golden Triad" of Agent Autonomy**:
+* **Tools (The Hands)**: Discrete, deterministic actions (e.g., SQL execution, APIs, script runners).
+* **Skills (The Cognitive Engine)**: Heuristic, prompt-driven reasoning workflows (e.g., specialized system prompts, agentic SOPs).
+* **RAG (The Memory)**: Dynamic, context-dependent knowledge retrieval (e.g., specialized vector indices, BM25 vs. GraphRAG strategies).
 
 ---
 
@@ -151,6 +150,29 @@ router.feedback(
     candidate=chosen_skill,
     success=True
 )
+
+# Scenario C: RAG Routing (Memory: dynamic, context-dependent knowledge retrieval)
+chosen_kb = router.route(
+    context_key="What is our policy on parental leave rollover?",
+    candidates=["rag/hr_handbook", "rag/benefits_v2_draft", "rag/general_faq"]
+)
+print(f"Routed to RAG index: {chosen_kb}")
+
+# Retrieve text chunks from chosen_kb, run the LLM, and evaluate success:
+from bayes_brain import evaluate_rag_success
+retrieved_chunks = ["Parental leave rollover allows up to 5 days rollover..."]
+generated_response = "Our policy allows you to roll over up to 5 days of parental leave."
+
+success = evaluate_rag_success(
+    response=generated_response,
+    source_chunks=retrieved_chunks,
+    faithfulness_threshold=0.5
+)
+router.feedback(
+    context_key="What is our policy on parental leave rollover?",
+    candidate=chosen_kb,
+    success=success
+)
 ```
 
 ### Asynchronous API
@@ -183,6 +205,25 @@ async def main():
         context_key="Refactor this legacy asyncio network loop",
         candidate=chosen_skill,
         success=True
+    )
+
+    # Async RAG Route
+    chosen_kb = await router.aroute(
+        context_key="What is our policy on parental leave rollover?",
+        candidates=["rag/hr_handbook", "rag/benefits_v2_draft", "rag/general_faq"]
+    )
+    print(f"Routed to: {chosen_kb}")
+
+    # Async RAG Feedback (using citation check & token overlap)
+    from bayes_brain import evaluate_rag_success
+    success = evaluate_rag_success(
+        response="Our policy allows 5 days rollover.",
+        source_chunks=["Parental leave rollover allows up to 5 days rollover..."]
+    )
+    await router.afeedback(
+        context_key="What is our policy on parental leave rollover?",
+        candidate=chosen_kb,
+        success=success
     )
 
 asyncio.run(main())
@@ -337,6 +378,64 @@ For production use-cases, the SQLite storage backends ([SQLiteStorage](file:///U
 
 ### 🔏 Robust Hashed Exact Matching Fallbacks
 When operating without an embedder, or if API embedder requests fail, the router normalizes the context (stripping whitespace) and hashes the string using SHA-256 (prefixed with `hash_`). This guarantees a short, fixed-length context key and prevents key matching fragility due to whitespace differences.
+
+### 🧠 Automated RAG Routing & Feedback Loops (Memory)
+
+RAG routing requires evaluating whether a given knowledge base or retrieval strategy succeeded. Because RAG fails silently (returning irrelevant noise or hallucinations rather than throwing errors), BayesBrain provides helper utilities to automate feedback loops and handle direct user UI feedback (such as Thumbs Up/Down components).
+
+#### 1. Automated RAG Success Metrics
+
+Combine citation checks (checking if the LLM returned a standard fallback phrase) and token-overlap faithfulness metrics:
+
+```python
+from bayes_brain import evaluate_rag_success
+
+retrieved_sources = [
+    "Employees get 4 weeks of paid vacation yearly.",
+    "Unused vacation days do not roll over."
+]
+llm_response = "Employees receive four weeks of paid vacation annually, but they do not roll over."
+
+# Returns True if the response contains no fallback phrases (e.g., "I don't know")
+# and has sufficient unique non-stopword token overlap with the sources (threshold defaults to 0.5)
+success = evaluate_rag_success(
+    response=llm_response,
+    source_chunks=retrieved_sources,
+    faithfulness_threshold=0.5
+)
+
+# Provide feedback to the router
+router.feedback(
+    context_key="How much vacation time do we get?",
+    candidate="rag/hr_policies",
+    success=success
+)
+```
+
+#### 2. UI / Human-in-the-Loop Feedback (Thumbs Up / Down)
+
+For scenarios where success is determined by the end user clicking thumbs up/down buttons on a chat UI, you can route the feedback payload directly back to the router using the `process_ui_feedback` (sync) or `aprocess_ui_feedback` (async) helpers. 
+
+These helpers map diverse UI states (`"thumbs_up"`, `"like"`, `"dislike"`, `True`, `False`, `1`, `0`) to a `1.0` or `0.0` reward and verify the HMAC signature of the trace ID.
+
+```python
+from bayes_brain import process_ui_feedback
+
+# 1. Route the query and obtain a signed trace ID (safeguards against client-side reward poisoning)
+chosen_source, trace_id = router.route_with_trace(
+    "How to reset credentials?", 
+    candidates=["rag/it_support", "rag/security_protocols"]
+)
+
+# ... backend delivers LLM response containing trace_id to client UI ...
+
+# 2. Receive thumbs-up click from client-side UI and process it:
+process_ui_feedback(
+    router=router,
+    trace_id=trace_id,       # Signed trace ID from route_with_trace
+    feedback_value="thumbs_up"  # Acceptable values: "thumbs_up", "thumbs_down", True, False, etc.
+)
+```
 
 ---
 

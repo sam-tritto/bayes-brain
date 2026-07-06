@@ -12,6 +12,13 @@ from bayes_brain.embeddings import (
     VectorStoreProtocol,
 )
 from bayes_brain.mcp_server import create_mcp_server
+from bayes_brain.rag import (
+    aprocess_ui_feedback,
+    calculate_faithfulness,
+    check_citation,
+    evaluate_rag_success,
+    process_ui_feedback,
+)
 from bayes_brain.router import (
     AsyncBayesianRouter,
     BayesianRouter,
@@ -50,4 +57,9 @@ __all__ = [
     "VectorStoreProtocol",
     "AsyncVectorStoreProtocol",
     "create_mcp_server",
+    "check_citation",
+    "calculate_faithfulness",
+    "evaluate_rag_success",
+    "process_ui_feedback",
+    "aprocess_ui_feedback",
 ]
