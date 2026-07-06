@@ -439,3 +439,43 @@ async def test_async_router_contextual_priors():
     assert results == ["calculator", "search"]
 
 
+@pytest.mark.anyio
+async def test_async_sqlite_storage_concurrency():
+    import asyncio
+    with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as tmp:
+        db_path = tmp.name
+
+    try:
+        storage = AsyncSQLiteStorage(db_path, max_connections=5, timeout=2.0)
+
+        # We will concurrently route/decay dozens of times on different tasks
+        async def run_concurrent_updates(task_id: int):
+            for i in range(10):
+                context_key = f"ctx_{task_id}_{i}"
+                tool_name = f"tool_{i}"
+                # Mix of reads, writes, and decay/updates
+                await storage.update_tool_params(context_key, tool_name, float(task_id), 1.0)
+                a, b = await storage.get_tool_params(context_key, tool_name)
+                assert a == float(task_id)
+                assert b == 1.0
+                
+                await storage.decay_and_update(context_key, tool_name, 0.9, 1.0)
+                await storage.log_selection(f"trace_{task_id}_{i}", context_key, tool_name)
+                await storage.log_feedback(f"trace_{task_id}_{i}", 1.0)
+
+        # Run 20 tasks concurrently (each doing 10 cycles, total 200 writes/decays/selections)
+        tasks = [run_concurrent_updates(t_id) for t_id in range(20)]
+        await asyncio.gather(*tasks)
+
+        # Verify selections count
+        logs = await storage.get_selection_logs()
+        assert len(logs) == 200
+        for log in logs:
+            assert log["reward"] == 1.0
+
+        await storage.close()
+    finally:
+        if os.path.exists(db_path):
+            os.remove(db_path)
+
+

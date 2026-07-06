@@ -1639,19 +1639,29 @@ class AsyncInMemoryStorage(AsyncBaseStorage):
             return sorted(self._selection_logs.values(), key=lambda x: x["timestamp"])
 
 
-class AsyncSQLiteStorage(AsyncBaseStorage):
+import contextlib
+
+
+class AsyncSQLiteConnectionPool:
     """
-    SQLite-backed storage for persistent local storage with async support.
+    Lightweight connection pool for aiosqlite connections.
     """
 
-    def __init__(self, db_path: str = "bayes_brain.db") -> None:
+    def __init__(self, db_path: str, max_size: int = 10, timeout: float = 5.0) -> None:
         self.db_path = db_path
-        self._conn: Optional[Any] = None
+        self.max_size = max_size
+        self.timeout = timeout
+        self._pool: asyncio.Queue = asyncio.Queue()
+        self._created = 0
         self._lock = asyncio.Lock()
 
-    async def _get_conn(self) -> Any:
+    @contextlib.asynccontextmanager
+    async def connection(self):
+        conn = None
         async with self._lock:
-            if self._conn is None:
+            if not self._pool.empty():
+                conn = self._pool.get_nowait()
+            elif self._created < self.max_size:
                 try:
                     import aiosqlite
                 except ImportError:
@@ -1659,12 +1669,92 @@ class AsyncSQLiteStorage(AsyncBaseStorage):
                         "aiosqlite is required for AsyncSQLiteStorage. "
                         "Please install it with: pip install aiosqlite"
                     )
-                self._conn = await aiosqlite.connect(self.db_path)
-                await self._conn.execute("PRAGMA journal_mode=WAL;")
-                await self._conn.execute("PRAGMA busy_timeout=5000;")
-                
-                # Initialize tables
-                await self._conn.execute(
+                conn = await aiosqlite.connect(self.db_path)
+                await conn.execute("PRAGMA journal_mode=WAL;")
+                await conn.execute(f"PRAGMA busy_timeout={int(self.timeout * 1000)};")
+                await conn.commit()
+                self._created += 1
+
+        if conn is None:
+            conn = await self._pool.get()
+
+        try:
+            yield conn
+        finally:
+            if conn is not None:
+                try:
+                    await conn.rollback()
+                except Exception:
+                    pass
+                await self._pool.put(conn)
+
+    async def close_all(self) -> None:
+        async with self._lock:
+            while not self._pool.empty():
+                conn = self._pool.get_nowait()
+                await conn.close()
+            self._created = 0
+
+
+class AsyncSQLiteStorage(AsyncBaseStorage):
+    """
+    SQLite-backed storage for persistent local storage with async support.
+    Uses a connection pool and lock-free retries with exponential backoff and jitter
+    to handle high concurrency workloads across different threads, tasks, and processes.
+    """
+
+    def __init__(self, db_path: str = "bayes_brain.db", max_connections: int = 10, timeout: float = 5.0) -> None:
+        self.db_path = db_path
+        self.max_connections = max_connections
+        self.timeout = timeout
+        self._pool = AsyncSQLiteConnectionPool(db_path, max_size=max_connections, timeout=timeout)
+        self._init_lock = asyncio.Lock()
+        self._initialized = False
+        # Deprecated / backward compatibility attributes
+        self._conn: Optional[Any] = None
+        self._lock = asyncio.Lock()
+
+    async def _get_conn(self) -> Any:
+        """
+        Deprecated. Returns a connection from the pool.
+        Kept for backward compatibility.
+        """
+        if self._conn is None:
+            import aiosqlite
+            self._conn = await aiosqlite.connect(self.db_path)
+            await self._conn.execute("PRAGMA journal_mode=WAL;")
+            await self._conn.execute(f"PRAGMA busy_timeout={int(self.timeout * 1000)};")
+            await self._conn.commit()
+        return self._conn
+
+    async def _execute_with_retry(self, func, *args, max_retries: int = 5, initial_delay: float = 0.05, max_delay: float = 1.0, **kwargs):
+        import sqlite3
+        import random
+        try:
+            import aiosqlite
+            sqlite_errors = (sqlite3.OperationalError, aiosqlite.OperationalError)
+        except ImportError:
+            sqlite_errors = (sqlite3.OperationalError,)
+
+        delay = initial_delay
+        for attempt in range(max_retries + 1):
+            try:
+                return await func(*args, **kwargs)
+            except sqlite_errors as e:
+                if attempt == max_retries or "locked" not in str(e).lower():
+                    raise
+                sleep_time = delay * (0.5 + random.random())
+                await asyncio.sleep(sleep_time)
+                delay = min(delay * 2, max_delay)
+
+    async def _ensure_initialized(self) -> None:
+        if self._initialized:
+            return
+        async with self._init_lock:
+            if self._initialized:
+                return
+            async with self._pool.connection() as conn:
+                await conn.execute(
                     """
                     CREATE TABLE IF NOT EXISTS tool_params (
                         context_key TEXT,
@@ -1675,7 +1765,7 @@ class AsyncSQLiteStorage(AsyncBaseStorage):
                     )
                     """
                 )
-                await self._conn.execute(
+                await conn.execute(
                     """
                     CREATE TABLE IF NOT EXISTS metadata (
                         key TEXT PRIMARY KEY,
@@ -1683,7 +1773,7 @@ class AsyncSQLiteStorage(AsyncBaseStorage):
                     )
                     """
                 )
-                await self._conn.execute(
+                await conn.execute(
                     """
                     CREATE TABLE IF NOT EXISTS context_vectors (
                         context_key TEXT PRIMARY KEY,
@@ -1691,7 +1781,7 @@ class AsyncSQLiteStorage(AsyncBaseStorage):
                     )
                     """
                 )
-                await self._conn.execute(
+                await conn.execute(
                     """
                     CREATE TABLE IF NOT EXISTS linear_bandit_params (
                         tool_name TEXT PRIMARY KEY,
@@ -1700,7 +1790,7 @@ class AsyncSQLiteStorage(AsyncBaseStorage):
                     )
                     """
                 )
-                await self._conn.execute(
+                await conn.execute(
                     """
                     CREATE TABLE IF NOT EXISTS selection_log (
                         trace_id TEXT PRIMARY KEY,
@@ -1711,56 +1801,29 @@ class AsyncSQLiteStorage(AsyncBaseStorage):
                     )
                     """
                 )
-                await self._conn.commit()
-            return self._conn
+                await conn.commit()
+            self._initialized = True
 
     async def get_tool_params(self, context_key: str, tool_name: str) -> Tuple[float, float]:
-        conn = await self._get_conn()
-        async with conn.execute(
-            "SELECT alpha, beta FROM tool_params WHERE context_key = ? AND tool_name = ?",
-            (context_key, tool_name),
-        ) as cursor:
-            row = await cursor.fetchone()
-            if row is not None:
-                return float(row[0]), float(row[1])
-            return 1.0, 1.0
-
-    async def update_tool_params(
-        self, context_key: str, tool_name: str, alpha: float, beta: float
-    ) -> None:
-        conn = await self._get_conn()
-        await conn.execute(
-            """
-            INSERT INTO tool_params (context_key, tool_name, alpha, beta)
-            VALUES (?, ?, ?, ?)
-            ON CONFLICT(context_key, tool_name) DO UPDATE SET
-                alpha = excluded.alpha,
-                beta = excluded.beta
-            """,
-            (context_key, tool_name, alpha, beta),
-        )
-        await conn.commit()
-
-    async def decay_and_update(
-        self, context_key: str, tool_name: str, decay_factor: float, reward: float
-    ) -> Tuple[float, float]:
-        conn = await self._get_conn()
-        async with self._lock:
-            try:
-                await conn.execute("BEGIN IMMEDIATE")
+        await self._ensure_initialized()
+        async def _run():
+            async with self._pool.connection() as conn:
                 async with conn.execute(
                     "SELECT alpha, beta FROM tool_params WHERE context_key = ? AND tool_name = ?",
                     (context_key, tool_name),
                 ) as cursor:
                     row = await cursor.fetchone()
                     if row is not None:
-                        alpha, beta = float(row[0]), float(row[1])
-                    else:
-                        alpha, beta = 1.0, 1.0
+                        return float(row[0]), float(row[1])
+                    return 1.0, 1.0
+        return await self._execute_with_retry(_run)
 
-                new_alpha = max(1.0, alpha * decay_factor + reward)
-                new_beta = max(1.0, beta * decay_factor + (1.0 - reward))
-
+    async def update_tool_params(
+        self, context_key: str, tool_name: str, alpha: float, beta: float
+    ) -> None:
+        await self._ensure_initialized()
+        async def _run():
+            async with self._pool.connection() as conn:
                 await conn.execute(
                     """
                     INSERT INTO tool_params (context_key, tool_name, alpha, beta)
@@ -1769,94 +1832,144 @@ class AsyncSQLiteStorage(AsyncBaseStorage):
                         alpha = excluded.alpha,
                         beta = excluded.beta
                     """,
-                    (context_key, tool_name, new_alpha, new_beta),
+                    (context_key, tool_name, alpha, beta),
                 )
                 await conn.commit()
-                return new_alpha, new_beta
-            except Exception as e:
-                await conn.rollback()
-                raise e
+        await self._execute_with_retry(_run)
+
+    async def decay_and_update(
+        self, context_key: str, tool_name: str, decay_factor: float, reward: float
+    ) -> Tuple[float, float]:
+        await self._ensure_initialized()
+        async def _run():
+            async with self._pool.connection() as conn:
+                try:
+                    await conn.execute("BEGIN IMMEDIATE")
+                    async with conn.execute(
+                        "SELECT alpha, beta FROM tool_params WHERE context_key = ? AND tool_name = ?",
+                        (context_key, tool_name),
+                    ) as cursor:
+                        row = await cursor.fetchone()
+                        if row is not None:
+                            alpha, beta = float(row[0]), float(row[1])
+                        else:
+                            alpha, beta = 1.0, 1.0
+
+                    new_alpha = max(1.0, alpha * decay_factor + reward)
+                    new_beta = max(1.0, beta * decay_factor + (1.0 - reward))
+
+                    await conn.execute(
+                        """
+                        INSERT INTO tool_params (context_key, tool_name, alpha, beta)
+                        VALUES (?, ?, ?, ?)
+                        ON CONFLICT(context_key, tool_name) DO UPDATE SET
+                            alpha = excluded.alpha,
+                            beta = excluded.beta
+                        """,
+                        (context_key, tool_name, new_alpha, new_beta),
+                    )
+                    await conn.commit()
+                    return new_alpha, new_beta
+                except Exception:
+                    await conn.rollback()
+                    raise
+        return await self._execute_with_retry(_run)
 
     async def close(self) -> None:
-        async with self._lock:
-            if self._conn is not None:
-                await self._conn.close()
-                self._conn = None
+        if self._conn is not None:
+            await self._conn.close()
+            self._conn = None
+        await self._pool.close_all()
 
     async def load_metadata(self, key: str) -> Optional[str]:
-        conn = await self._get_conn()
-        async with conn.execute("SELECT val FROM metadata WHERE key = ?", (key,)) as cursor:
-            row = await cursor.fetchone()
-            return row[0] if row is not None else None
+        await self._ensure_initialized()
+        async def _run():
+            async with self._pool.connection() as conn:
+                async with conn.execute("SELECT val FROM metadata WHERE key = ?", (key,)) as cursor:
+                    row = await cursor.fetchone()
+                    return row[0] if row is not None else None
+        return await self._execute_with_retry(_run)
 
     async def save_metadata(self, key: str, value: str) -> None:
-        conn = await self._get_conn()
-        await conn.execute(
-            """
-            INSERT INTO metadata (key, val) VALUES (?, ?)
-            ON CONFLICT(key) DO UPDATE SET val = excluded.val
-            """,
-            (key, value),
-        )
-        await conn.commit()
+        await self._ensure_initialized()
+        async def _run():
+            async with self._pool.connection() as conn:
+                await conn.execute(
+                    """
+                    INSERT INTO metadata (key, val) VALUES (?, ?)
+                    ON CONFLICT(key) DO UPDATE SET val = excluded.val
+                    """,
+                    (key, value),
+                )
+                await conn.commit()
+        await self._execute_with_retry(_run)
 
     async def load_all_vectors(self) -> Dict[str, List[float]]:
-        conn = await self._get_conn()
-        async with conn.execute("SELECT context_key, vector FROM context_vectors") as cursor:
-            rows = await cursor.fetchall()
+        await self._ensure_initialized()
+        async def _run():
+            async with self._pool.connection() as conn:
+                async with conn.execute("SELECT context_key, vector FROM context_vectors") as cursor:
+                    rows = await cursor.fetchall()
 
-        if not rows:
-            # Migration check
-            serialized = await self.load_metadata("vector_context_store")
-            if serialized:
-                try:
-                    data = json.loads(serialized)
-                    for k, v in data.items():
-                        await conn.execute(
-                            """
-                            INSERT OR IGNORE INTO context_vectors (context_key, vector)
-                            VALUES (?, ?)
-                            """,
-                            (k, json.dumps(v)),
-                        )
-                    await conn.commit()
-                    # Query again
-                    async with conn.execute("SELECT context_key, vector FROM context_vectors") as cursor:
-                        rows = await cursor.fetchall()
-                except Exception:
-                    pass
+                if not rows:
+                    # Migration check
+                    serialized = await self.load_metadata("vector_context_store")
+                    if serialized:
+                        try:
+                            data = json.loads(serialized)
+                            for k, v in data.items():
+                                await conn.execute(
+                                    """
+                                    INSERT OR IGNORE INTO context_vectors (context_key, vector)
+                                    VALUES (?, ?)
+                                    """,
+                                    (k, json.dumps(v)),
+                                )
+                            await conn.commit()
+                            # Query again
+                            async with conn.execute("SELECT context_key, vector FROM context_vectors") as cursor2:
+                                rows = await cursor2.fetchall()
+                        except Exception:
+                            pass
 
-        res = {}
-        for row in rows:
-            res[row[0]] = json.loads(row[1])
-        return res
+                res = {}
+                for row in rows:
+                    res[row[0]] = json.loads(row[1])
+                return res
+        return await self._execute_with_retry(_run)
 
     async def save_vector(self, context_key: str, vector: Sequence[float]) -> None:
-        conn = await self._get_conn()
-        await conn.execute(
-            """
-            INSERT INTO context_vectors (context_key, vector)
-            VALUES (?, ?)
-            ON CONFLICT(context_key) DO UPDATE SET vector = excluded.vector
-            """,
-            (context_key, json.dumps(list(vector))),
-        )
-        await conn.commit()
+        await self._ensure_initialized()
+        async def _run():
+            async with self._pool.connection() as conn:
+                await conn.execute(
+                    """
+                    INSERT INTO context_vectors (context_key, vector)
+                    VALUES (?, ?)
+                    ON CONFLICT(context_key) DO UPDATE SET vector = excluded.vector
+                    """,
+                    (context_key, json.dumps(list(vector))),
+                )
+                await conn.commit()
+        await self._execute_with_retry(_run)
 
     async def aget_linear_params(
         self, tool_name: str
     ) -> Tuple[Optional[np.ndarray], Optional[np.ndarray]]:
-        conn = await self._get_conn()
-        async with conn.execute(
-            "SELECT precision_matrix, reward_vector FROM linear_bandit_params WHERE tool_name = ?",
-            (tool_name,),
-        ) as cursor:
-            row = await cursor.fetchone()
-            if row is not None:
-                precision = np.array(json.loads(row[0]), dtype=np.float32)
-                reward_vector = np.array(json.loads(row[1]), dtype=np.float32)
-                return precision, reward_vector
-            return None, None
+        await self._ensure_initialized()
+        async def _run():
+            async with self._pool.connection() as conn:
+                async with conn.execute(
+                    "SELECT precision_matrix, reward_vector FROM linear_bandit_params WHERE tool_name = ?",
+                    (tool_name,),
+                ) as cursor:
+                    row = await cursor.fetchone()
+                    if row is not None:
+                        precision = np.array(json.loads(row[0]), dtype=np.float32)
+                        reward_vector = np.array(json.loads(row[1]), dtype=np.float32)
+                        return precision, reward_vector
+                    return None, None
+        return await self._execute_with_retry(_run)
 
     async def adecay_and_update_linear(
         self,
@@ -1868,190 +1981,20 @@ class AsyncSQLiteStorage(AsyncBaseStorage):
         prior_p: float,
         diagonal: bool,
     ) -> Tuple[np.ndarray, np.ndarray]:
+        await self._ensure_initialized()
         d = len(x_augmented)
-        conn = await self._get_conn()
-        async with self._lock:
-            try:
-                await conn.execute("BEGIN IMMEDIATE")
-                async with conn.execute(
-                    "SELECT precision_matrix, reward_vector FROM linear_bandit_params WHERE tool_name = ?",
-                    (tool_name,),
-                ) as cursor:
-                    row = await cursor.fetchone()
-                if row is not None:
-                    precision = np.array(json.loads(row[0]), dtype=np.float32)
-                    reward_vector = np.array(json.loads(row[1]), dtype=np.float32)
-                else:
-                    precision = lambda_val * np.ones(d, dtype=np.float32) if diagonal else lambda_val * np.eye(d, dtype=np.float32)
-                    reward_vector = np.zeros(d, dtype=np.float32)
-                    reward_vector[-1] = lambda_val * prior_p
-
-                prior_reward_vector = np.zeros(d, dtype=np.float32)
-                prior_reward_vector[-1] = lambda_val * prior_p
-
-                if diagonal:
-                    new_precision = decay_factor * precision + (1.0 - decay_factor) * lambda_val * np.ones(d, dtype=np.float32) + (x_augmented ** 2)
-                else:
-                    new_precision = decay_factor * precision + (1.0 - decay_factor) * lambda_val * np.eye(d, dtype=np.float32) + np.outer(x_augmented, x_augmented)
-
-                new_reward_vector = decay_factor * reward_vector + (1.0 - decay_factor) * prior_reward_vector + reward * x_augmented
-
-                await conn.execute(
-                    """
-                    INSERT INTO linear_bandit_params (tool_name, precision_matrix, reward_vector)
-                    VALUES (?, ?, ?)
-                    ON CONFLICT(tool_name) DO UPDATE SET
-                        precision_matrix = excluded.precision_matrix,
-                        reward_vector = excluded.reward_vector
-                    """,
-                    (tool_name, json.dumps(new_precision.tolist()), json.dumps(new_reward_vector.tolist())),
-                )
-                await conn.commit()
-                return new_precision, new_reward_vector
-            except Exception as e:
-                await conn.rollback()
-                raise e
-
-    async def get_tool_params_batch(
-        self, keys: List[Tuple[str, str]]
-    ) -> Dict[Tuple[str, str], Tuple[float, float]]:
-        if not keys:
-            return {}
-        results = {key: (1.0, 1.0) for key in keys}
-        conn = await self._get_conn()
-        chunk_size = 200
-        for i in range(0, len(keys), chunk_size):
-            chunk = keys[i:i+chunk_size]
-            clauses = []
-            params = []
-            for c_key, t_name in chunk:
-                clauses.append("(context_key = ? AND tool_name = ?)")
-                params.extend([c_key, t_name])
-            query = "SELECT context_key, tool_name, alpha, beta FROM tool_params WHERE " + " OR ".join(clauses)
-            async with conn.execute(query, params) as cursor:
-                rows = await cursor.fetchall()
-                for row in rows:
-                    results[(row[0], row[1])] = (float(row[2]), float(row[3]))
-        return results
-
-    async def update_tool_params_batch(
-        self, params: Dict[Tuple[str, str], Tuple[float, float]]
-    ) -> None:
-        if not params:
-            return
-        conn = await self._get_conn()
-        await conn.executemany(
-            """
-            INSERT INTO tool_params (context_key, tool_name, alpha, beta)
-            VALUES (?, ?, ?, ?)
-            ON CONFLICT(context_key, tool_name) DO UPDATE SET
-                alpha = excluded.alpha,
-                beta = excluded.beta
-            """,
-            [(ctx, tool, alpha, beta) for (ctx, tool), (alpha, beta) in params.items()]
-        )
-        await conn.commit()
-
-    async def decay_and_update_batch(
-        self, updates: List[Tuple[str, str, float, float]]
-    ) -> List[Tuple[float, float]]:
-        if not updates:
-            return []
-        
-        conn = await self._get_conn()
-        async with self._lock:
-            try:
-                await conn.execute("BEGIN IMMEDIATE")
-                
-                keys = [(ctx, tool) for ctx, tool, _, _ in updates]
-                current_vals = {}
-                chunk_size = 200
-                for i in range(0, len(keys), chunk_size):
-                    chunk = keys[i:i+chunk_size]
-                    clauses = []
-                    params = []
-                    for c_key, t_name in chunk:
-                        clauses.append("(context_key = ? AND tool_name = ?)")
-                        params.extend([c_key, t_name])
-                    query = "SELECT context_key, tool_name, alpha, beta FROM tool_params WHERE " + " OR ".join(clauses)
-                    async with conn.execute(query, params) as cursor:
-                        rows = await cursor.fetchall()
-                        for row in rows:
-                            current_vals[(row[0], row[1])] = (float(row[2]), float(row[3]))
-                
-                updated_params = []
-                for ctx, tool, decay_factor, reward in updates:
-                    alpha, beta = current_vals.get((ctx, tool), (1.0, 1.0))
-                    new_alpha = max(1.0, alpha * decay_factor + reward)
-                    new_beta = max(1.0, beta * decay_factor + (1.0 - reward))
-                    current_vals[(ctx, tool)] = (new_alpha, new_beta)
-                    updated_params.append((ctx, tool, new_alpha, new_beta))
-                
-                db_updates = [(ctx, tool, val[0], val[1]) for (ctx, tool), val in current_vals.items()]
-                await conn.executemany(
-                    """
-                    INSERT INTO tool_params (context_key, tool_name, alpha, beta)
-                    VALUES (?, ?, ?, ?)
-                    ON CONFLICT(context_key, tool_name) DO UPDATE SET
-                        alpha = excluded.alpha,
-                        beta = excluded.beta
-                    """,
-                    db_updates
-                )
-                await conn.commit()
-                return [(item[2], item[3]) for item in updated_params]
-            except Exception as e:
-                await conn.rollback()
-                raise e
-
-    async def aget_linear_params_batch(
-        self, tool_names: List[str]
-    ) -> Dict[str, Tuple[np.ndarray, np.ndarray]]:
-        if not tool_names:
-            return {}
-        conn = await self._get_conn()
-        placeholders = ",".join(["?"] * len(tool_names))
-        async with conn.execute(
-            f"SELECT tool_name, precision_matrix, reward_vector FROM linear_bandit_params WHERE tool_name IN ({placeholders})",
-            tool_names,
-        ) as cursor:
-            rows = await cursor.fetchall()
-        results = {}
-        for row in rows:
-            precision = np.array(json.loads(row[1]), dtype=np.float32)
-            reward_vector = np.array(json.loads(row[2]), dtype=np.float32)
-            results[row[0]] = (precision, reward_vector)
-        return results
-
-    async def adecay_and_update_linear_batch(
-        self, updates: List[Tuple[str, float, float, np.ndarray, float, float, bool]]
-    ) -> List[Tuple[np.ndarray, np.ndarray]]:
-        if not updates:
-            return []
-        
-        conn = await self._get_conn()
-        async with self._lock:
-            try:
-                await conn.execute("BEGIN IMMEDIATE")
-                
-                tool_names = list(set([item[0] for item in updates]))
-                current_vals = {}
-                if tool_names:
-                    placeholders = ",".join(["?"] * len(tool_names))
-                    query = f"SELECT tool_name, precision_matrix, reward_vector FROM linear_bandit_params WHERE tool_name IN ({placeholders})"
-                    async with conn.execute(query, tool_names) as cursor:
-                        rows = await cursor.fetchall()
-                        for row in rows:
-                            precision = np.array(json.loads(row[1]), dtype=np.float32)
-                            reward_vector = np.array(json.loads(row[2]), dtype=np.float32)
-                            current_vals[row[0]] = (precision, reward_vector)
-                
-                results = []
-                for tool_name, decay_factor, reward, x_augmented, lambda_val, prior_p, diagonal in updates:
-                    d = len(x_augmented)
-                    val = current_vals.get(tool_name)
-                    if val is not None:
-                        precision, reward_vector = val
+        async def _run():
+            async with self._pool.connection() as conn:
+                try:
+                    await conn.execute("BEGIN IMMEDIATE")
+                    async with conn.execute(
+                        "SELECT precision_matrix, reward_vector FROM linear_bandit_params WHERE tool_name = ?",
+                        (tool_name,),
+                    ) as cursor:
+                        row = await cursor.fetchone()
+                    if row is not None:
+                        precision = np.array(json.loads(row[0]), dtype=np.float32)
+                        reward_vector = np.array(json.loads(row[1]), dtype=np.float32)
                     else:
                         precision = lambda_val * np.ones(d, dtype=np.float32) if diagonal else lambda_val * np.eye(d, dtype=np.float32)
                         reward_vector = np.zeros(d, dtype=np.float32)
@@ -2067,81 +2010,274 @@ class AsyncSQLiteStorage(AsyncBaseStorage):
 
                     new_reward_vector = decay_factor * reward_vector + (1.0 - decay_factor) * prior_reward_vector + reward * x_augmented
 
-                    current_vals[tool_name] = (new_precision, new_reward_vector)
-                    results.append((np.copy(new_precision), np.copy(new_reward_vector)))
-                
-                db_updates = []
-                for t_name, (prec, rew) in current_vals.items():
-                    db_updates.append((t_name, json.dumps(prec.tolist()), json.dumps(rew.tolist())))
-                
+                    await conn.execute(
+                        """
+                        INSERT INTO linear_bandit_params (tool_name, precision_matrix, reward_vector)
+                        VALUES (?, ?, ?)
+                        ON CONFLICT(tool_name) DO UPDATE SET
+                            precision_matrix = excluded.precision_matrix,
+                            reward_vector = excluded.reward_vector
+                        """,
+                        (tool_name, json.dumps(new_precision.tolist()), json.dumps(new_reward_vector.tolist())),
+                    )
+                    await conn.commit()
+                    return new_precision, new_reward_vector
+                except Exception:
+                    await conn.rollback()
+                    raise
+        return await self._execute_with_retry(_run)
+
+    async def get_tool_params_batch(
+        self, keys: List[Tuple[str, str]]
+    ) -> Dict[Tuple[str, str], Tuple[float, float]]:
+        await self._ensure_initialized()
+        if not keys:
+            return {}
+        async def _run():
+            results = {key: (1.0, 1.0) for key in keys}
+            async with self._pool.connection() as conn:
+                chunk_size = 200
+                for i in range(0, len(keys), chunk_size):
+                    chunk = keys[i:i+chunk_size]
+                    clauses = []
+                    params = []
+                    for c_key, t_name in chunk:
+                        clauses.append("(context_key = ? AND tool_name = ?)")
+                        params.extend([c_key, t_name])
+                    query = "SELECT context_key, tool_name, alpha, beta FROM tool_params WHERE " + " OR ".join(clauses)
+                    async with conn.execute(query, params) as cursor:
+                        rows = await cursor.fetchall()
+                        for row in rows:
+                            results[(row[0], row[1])] = (float(row[2]), float(row[3]))
+            return results
+        return await self._execute_with_retry(_run)
+
+    async def update_tool_params_batch(
+        self, params: Dict[Tuple[str, str], Tuple[float, float]]
+    ) -> None:
+        await self._ensure_initialized()
+        if not params:
+            return
+        async def _run():
+            async with self._pool.connection() as conn:
                 await conn.executemany(
                     """
-                    INSERT INTO linear_bandit_params (tool_name, precision_matrix, reward_vector)
-                    VALUES (?, ?, ?)
-                    ON CONFLICT(tool_name) DO UPDATE SET
-                        precision_matrix = excluded.precision_matrix,
-                        reward_vector = excluded.reward_vector
+                    INSERT INTO tool_params (context_key, tool_name, alpha, beta)
+                    VALUES (?, ?, ?, ?)
+                    ON CONFLICT(context_key, tool_name) DO UPDATE SET
+                        alpha = excluded.alpha,
+                        beta = excluded.beta
                     """,
-                    db_updates
+                    [(ctx, tool, alpha, beta) for (ctx, tool), (alpha, beta) in params.items()]
                 )
                 await conn.commit()
+        await self._execute_with_retry(_run)
+
+    async def decay_and_update_batch(
+        self, updates: List[Tuple[str, str, float, float]]
+    ) -> List[Tuple[float, float]]:
+        await self._ensure_initialized()
+        if not updates:
+            return []
+        async def _run():
+            async with self._pool.connection() as conn:
+                try:
+                    await conn.execute("BEGIN IMMEDIATE")
+                    
+                    keys = [(ctx, tool) for ctx, tool, _, _ in updates]
+                    current_vals = {}
+                    chunk_size = 200
+                    for i in range(0, len(keys), chunk_size):
+                        chunk = keys[i:i+chunk_size]
+                        clauses = []
+                        params = []
+                        for c_key, t_name in chunk:
+                            clauses.append("(context_key = ? AND tool_name = ?)")
+                            params.extend([c_key, t_name])
+                        query = "SELECT context_key, tool_name, alpha, beta FROM tool_params WHERE " + " OR ".join(clauses)
+                        async with conn.execute(query, params) as cursor:
+                            rows = await cursor.fetchall()
+                            for row in rows:
+                                current_vals[(row[0], row[1])] = (float(row[2]), float(row[3]))
+                    
+                    updated_params = []
+                    for ctx, tool, decay_factor, reward in updates:
+                        alpha, beta = current_vals.get((ctx, tool), (1.0, 1.0))
+                        new_alpha = max(1.0, alpha * decay_factor + reward)
+                        new_beta = max(1.0, beta * decay_factor + (1.0 - reward))
+                        current_vals[(ctx, tool)] = (new_alpha, new_beta)
+                        updated_params.append((ctx, tool, new_alpha, new_beta))
+                    
+                    db_updates = [(ctx, tool, val[0], val[1]) for (ctx, tool), val in current_vals.items()]
+                    await conn.executemany(
+                        """
+                        INSERT INTO tool_params (context_key, tool_name, alpha, beta)
+                        VALUES (?, ?, ?, ?)
+                        ON CONFLICT(context_key, tool_name) DO UPDATE SET
+                            alpha = excluded.alpha,
+                            beta = excluded.beta
+                        """,
+                        db_updates
+                    )
+                    await conn.commit()
+                    return [(item[2], item[3]) for item in updated_params]
+                except Exception:
+                    await conn.rollback()
+                    raise
+        return await self._execute_with_retry(_run)
+
+    async def aget_linear_params_batch(
+        self, tool_names: List[str]
+    ) -> Dict[str, Tuple[np.ndarray, np.ndarray]]:
+        await self._ensure_initialized()
+        if not tool_names:
+            return {}
+        async def _run():
+            async with self._pool.connection() as conn:
+                placeholders = ",".join(["?"] * len(tool_names))
+                async with conn.execute(
+                    f"SELECT tool_name, precision_matrix, reward_vector FROM linear_bandit_params WHERE tool_name IN ({placeholders})",
+                    tool_names,
+                ) as cursor:
+                    rows = await cursor.fetchall()
+                results = {}
+                for row in rows:
+                    precision = np.array(json.loads(row[1]), dtype=np.float32)
+                    reward_vector = np.array(json.loads(row[2]), dtype=np.float32)
+                    results[row[0]] = (precision, reward_vector)
                 return results
-            except Exception as e:
-                await conn.rollback()
-                raise e
+        return await self._execute_with_retry(_run)
+
+    async def adecay_and_update_linear_batch(
+        self, updates: List[Tuple[str, float, float, np.ndarray, float, float, bool]]
+    ) -> List[Tuple[np.ndarray, np.ndarray]]:
+        await self._ensure_initialized()
+        if not updates:
+            return []
+        async def _run():
+            async with self._pool.connection() as conn:
+                try:
+                    await conn.execute("BEGIN IMMEDIATE")
+                    
+                    tool_names = list(set([item[0] for item in updates]))
+                    current_vals = {}
+                    if tool_names:
+                        placeholders = ",".join(["?"] * len(tool_names))
+                        query = f"SELECT tool_name, precision_matrix, reward_vector FROM linear_bandit_params WHERE tool_name IN ({placeholders})"
+                        async with conn.execute(query, tool_names) as cursor:
+                            rows = await cursor.fetchall()
+                            for row in rows:
+                                precision = np.array(json.loads(row[1]), dtype=np.float32)
+                                reward_vector = np.array(json.loads(row[2]), dtype=np.float32)
+                                current_vals[row[0]] = (precision, reward_vector)
+                    
+                    results = []
+                    for tool_name, decay_factor, reward, x_augmented, lambda_val, prior_p, diagonal in updates:
+                        d = len(x_augmented)
+                        val = current_vals.get(tool_name)
+                        if val is not None:
+                            precision, reward_vector = val
+                        else:
+                            precision = lambda_val * np.ones(d, dtype=np.float32) if diagonal else lambda_val * np.eye(d, dtype=np.float32)
+                            reward_vector = np.zeros(d, dtype=np.float32)
+                            reward_vector[-1] = lambda_val * prior_p
+
+                        prior_reward_vector = np.zeros(d, dtype=np.float32)
+                        prior_reward_vector[-1] = lambda_val * prior_p
+
+                        if diagonal:
+                            new_precision = decay_factor * precision + (1.0 - decay_factor) * lambda_val * np.ones(d, dtype=np.float32) + (x_augmented ** 2)
+                        else:
+                            new_precision = decay_factor * precision + (1.0 - decay_factor) * lambda_val * np.eye(d, dtype=np.float32) + np.outer(x_augmented, x_augmented)
+
+                        new_reward_vector = decay_factor * reward_vector + (1.0 - decay_factor) * prior_reward_vector + reward * x_augmented
+
+                        current_vals[tool_name] = (new_precision, new_reward_vector)
+                        results.append((np.copy(new_precision), np.copy(new_reward_vector)))
+                    
+                    db_updates = []
+                    for t_name, (prec, rew) in current_vals.items():
+                        db_updates.append((t_name, json.dumps(prec.tolist()), json.dumps(rew.tolist())))
+                    
+                    await conn.executemany(
+                        """
+                        INSERT INTO linear_bandit_params (tool_name, precision_matrix, reward_vector)
+                        VALUES (?, ?, ?)
+                        ON CONFLICT(tool_name) DO UPDATE SET
+                            precision_matrix = excluded.precision_matrix,
+                            reward_vector = excluded.reward_vector
+                        """,
+                        db_updates
+                    )
+                    await conn.commit()
+                    return results
+                except Exception:
+                    await conn.rollback()
+                    raise
+        return await self._execute_with_retry(_run)
 
     async def asave_vectors(self, vectors: Dict[str, Sequence[float]]) -> None:
+        await self._ensure_initialized()
         if not vectors:
             return
-        conn = await self._get_conn()
-        await conn.executemany(
-            """
-            INSERT INTO context_vectors (context_key, vector)
-            VALUES (?, ?)
-            ON CONFLICT(context_key) DO UPDATE SET vector = excluded.vector
-            """,
-            [(k, json.dumps(list(v))) for k, v in vectors.items()]
-        )
-        await conn.commit()
+        async def _run():
+            async with self._pool.connection() as conn:
+                await conn.executemany(
+                    """
+                    INSERT INTO context_vectors (context_key, vector)
+                    VALUES (?, ?)
+                    ON CONFLICT(context_key) DO UPDATE SET vector = excluded.vector
+                    """,
+                    [(k, json.dumps(list(v))) for k, v in vectors.items()]
+                )
+                await conn.commit()
+        await self._execute_with_retry(_run)
 
     async def log_selection(self, trace_id: str, context_key: str, tool_name: str) -> None:
-        conn = await self._get_conn()
+        await self._ensure_initialized()
         timestamp = datetime.now(timezone.utc).isoformat()
-        async with self._lock:
-            await conn.execute(
-                """
-                INSERT OR IGNORE INTO selection_log (trace_id, timestamp, context_key, tool_name, reward)
-                VALUES (?, ?, ?, ?, NULL)
-                """,
-                (trace_id, timestamp, context_key, tool_name),
-            )
-            await conn.commit()
+        async def _run():
+            async with self._pool.connection() as conn:
+                await conn.execute(
+                    """
+                    INSERT OR IGNORE INTO selection_log (trace_id, timestamp, context_key, tool_name, reward)
+                    VALUES (?, ?, ?, ?, NULL)
+                    """,
+                    (trace_id, timestamp, context_key, tool_name),
+                )
+                await conn.commit()
+        await self._execute_with_retry(_run)
 
     async def log_feedback(self, trace_id: str, reward: float) -> None:
-        conn = await self._get_conn()
-        async with self._lock:
-            await conn.execute(
-                "UPDATE selection_log SET reward = ? WHERE trace_id = ?",
-                (reward, trace_id),
-            )
-            await conn.commit()
+        await self._ensure_initialized()
+        async def _run():
+            async with self._pool.connection() as conn:
+                await conn.execute(
+                    "UPDATE selection_log SET reward = ? WHERE trace_id = ?",
+                    (reward, trace_id),
+                )
+                await conn.commit()
+        await self._execute_with_retry(_run)
 
     async def get_selection_logs(self) -> List[Dict[str, Any]]:
-        conn = await self._get_conn()
-        async with self._lock:
-            async with conn.execute(
-                "SELECT trace_id, timestamp, context_key, tool_name, reward FROM selection_log ORDER BY timestamp ASC"
-            ) as cursor:
-                logs = []
-                async for row in cursor:
-                    logs.append({
-                        "trace_id": row[0],
-                        "timestamp": row[1],
-                        "context_key": row[2],
-                        "tool_name": row[3],
-                        "reward": float(row[4]) if row[4] is not None else None,
-                    })
-                return logs
+        await self._ensure_initialized()
+        async def _run():
+            async with self._pool.connection() as conn:
+                async with conn.execute(
+                    "SELECT trace_id, timestamp, context_key, tool_name, reward FROM selection_log ORDER BY timestamp ASC"
+                ) as cursor:
+                    logs = []
+                    async for row in cursor:
+                        logs.append({
+                            "trace_id": row[0],
+                            "timestamp": row[1],
+                            "context_key": row[2],
+                            "tool_name": row[3],
+                            "reward": float(row[4]) if row[4] is not None else None,
+                        })
+                    return logs
+        return await self._execute_with_retry(_run)
+
 
 
 class AsyncRedisStorage(AsyncBaseStorage):

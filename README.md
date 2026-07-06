@@ -45,6 +45,7 @@ Instead of partitioning tasks into discrete clusters, the linear modes learn a l
   where $\hat{w}_a$ is the ridge regression estimate, $B_a$ is the precision matrix, and $\alpha$ (or $v$) is the exploration weight.
 * **L2 Regularization ($\lambda$)**: Performs ridge regression shrinkage on parameters.
 * **Diagonal Covariance Approximation**: Optional diagonal approximation ($O(d)$ runtime/storage) to avoid full matrix inversion ($O(d^3)$) during high-throughput execution.
+* **Shared-Parameter (Hybrid) Contextual Bandits**: Maps the task context $x_c$ and the tool's embedding $t_a$ into a single joint feature space, $x_{\text{augmented}} = [x_c, t_a, 1.0]$, and maintains a single unified weight vector $w \in \mathbb{R}^{d_{ctx} + d_{tool} + 1}$ across all tools. This eliminates disjoint parameter spaces and enables zero-shot generalization.
 
 ---
 
@@ -222,6 +223,47 @@ router = BayesianToolRouter(
 )
 ```
 
+### 🤝 Shared-Parameter (Hybrid) Contextual Bandits
+For setups where you want to generalize learning across tools (e.g., in a cold-start situation where a new tool is introduced), BayesBrain implements a **Shared-Parameter (Hybrid) Contextual Bandit**.
+
+Instead of maintaining disjoint parameter matrices for each individual tool, the hybrid mode learns a single unified parameter set $w \in \mathbb{R}^{d_{ctx} + d_{tool} + 1}$ stored under a shared database key (`__shared_hybrid__`). For each routing decision:
+1. Task context $x_c$ and candidate tool embeddings $t_a$ are resolved.
+2. The router builds an augmented feature vector: $x_{\text{augmented}} = [x_c, t_a, 1.0]$.
+3. The routing score is computed by taking the dot product of $x_{\text{augmented}}$ with the unified shared weight vector (sampled from the posterior in LinTS, or the ridge regression estimate plus exploration bonus in LinUCB).
+
+#### Enabling Hybrid Mode:
+```python
+# Define or resolve embeddings for your tools
+tool_embeddings = {
+    "math_calculator": [1.0, 0.0, 0.1],
+    "python_interpreter": [0.9, 0.1, 0.2],
+    "web_search": [0.0, 1.0, 0.0]
+}
+
+# Or provide string descriptions for dynamic metadata embedding
+tool_metadata = {
+    "math_calculator": "Execute mathematical equations and numeric calculations",
+    "python_interpreter": "Run custom Python script blocks for data analysis",
+    "web_search": "Search the web for real-time information"
+}
+
+router = BayesianToolRouter(
+    storage=storage,
+    embedder=embedder,
+    mode="linucb",
+    hybrid=True,                       # Enable hybrid mode
+    tool_embeddings=tool_embeddings,   # Direct embedding vectors (Optional)
+    tool_metadata=tool_metadata,       # String descriptions to embed dynamically (Optional)
+    diagonal_covariance=True
+)
+```
+
+#### Dynamic Tool Embedding Resolution
+When `hybrid=True`, tool embeddings are resolved dynamically in order of preference:
+1. **Direct Vector Lookup**: Uses vectors provided in `tool_embeddings`.
+2. **Metadata Embedding**: Embeds string descriptions provided in `tool_metadata` using the active `ContextEmbedder` / `AsyncContextEmbedder`.
+3. **Fallback Embedding**: Embeds the tool's name (`tool_name`) as a fallback via the active embedder.
+
 ### 📦 Batch/Bulk API Support
 Avoid the N-roundtrip database/network bottleneck when processing large telemetry bundles or task lists:
 
@@ -281,10 +323,12 @@ router = BayesianToolRouter(
 )
 ```
 
-### ⚡ High-Performance SQLite WAL Mode
-The [SQLiteStorage](file:///Users/sam/Locals%20Only/bayes-brain/src/bayes_brain/storage.py#L387) and [AsyncSQLiteStorage](file:///Users/sam/Locals%20Only/bayes-brain/src/bayes_brain/storage.py#L1642) backends initialize with:
-* **Write-Ahead Logging (WAL)**: `PRAGMA journal_mode=WAL;` to dramatically improve read/write concurrency.
-* **Busy Timeout**: `PRAGMA busy_timeout=5000;` to gracefully handle concurrent lock contentions.
+### ⚡ High-Concurrency & High-Performance SQLite Backend
+For production use-cases, the SQLite storage backends ([SQLiteStorage](file:///Users/sam/Locals%20Only/bayes-brain/src/bayes_brain/storage.py#L387) and [AsyncSQLiteStorage](file:///Users/sam/Locals%20Only/bayes-brain/src/bayes_brain/storage.py#L1642)) are built for concurrent, lock-free performance:
+* **Write-Ahead Logging (WAL)**: Initialized with `PRAGMA journal_mode=WAL;` to dramatically improve read/write concurrency.
+* **Busy Timeout**: Initialized with `PRAGMA busy_timeout=5000;` to handle transient write contentions.
+* **Connection Pooling (`AsyncSQLiteConnectionPool`)**: `AsyncSQLiteStorage` manages an elastic pool of up to 10 concurrent database connections, returning them to the pool after operations finish, and rolling back uncommitted transactions automatically.
+* **Exponential Backoff & Jitter**: All database operations in `AsyncSQLiteStorage` are wrapped in an `_execute_with_retry` decorator. If a `sqlite3.OperationalError` (such as `"database is locked"`) is encountered, the operation retries with a randomized exponential backoff to ensure thread, task, and process safety.
 
 ### 🔏 Robust Hashed Exact Matching Fallbacks
 When operating without an embedder, or if API embedder requests fail, the router normalizes the context (stripping whitespace) and hashes the string using SHA-256 (prefixed with `hash_`). This guarantees a short, fixed-length context key and prevents key matching fragility due to whitespace differences.
