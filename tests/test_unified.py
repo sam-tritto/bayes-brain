@@ -5,8 +5,6 @@ from unittest.mock import MagicMock
 from bayes_brain import (
     BayesianRouter,
     AsyncBayesianRouter,
-    BayesianToolRouter,
-    AsyncBayesianToolRouter,
 )
 from bayes_brain.storage import (
     InMemoryStorage,
@@ -54,12 +52,6 @@ def test_conflict_raise():
     storage = InMemoryStorage()
     with pytest.raises(ValueError, match="Cannot specify both"):
         BayesianRouter(storage=storage, storage_backend="memory")
-
-
-def test_aliases_backward_compatibility():
-    # Verify that the old class names are aliases for the new class names
-    assert BayesianToolRouter is BayesianRouter
-    assert AsyncBayesianToolRouter is AsyncBayesianRouter
 
 
 def test_flexible_parameters_routing_sync():

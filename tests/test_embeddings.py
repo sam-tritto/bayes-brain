@@ -278,7 +278,7 @@ def test_sqlite_vector_store_missing_sqlite_vec(tmp_path):
 
 
 def test_router_with_sqlite_vector_store(tmp_path):
-    from bayes_brain.router import BayesianToolRouter
+    from bayes_brain.router import BayesianRouter
     from bayes_brain.storage import InMemoryStorage
     
     class MockEmbedder:
@@ -292,7 +292,7 @@ def test_router_with_sqlite_vector_store(tmp_path):
     storage = InMemoryStorage()
     
     try:
-        router = BayesianToolRouter(
+        router = BayesianRouter(
             storage=storage,
             embedder=MockEmbedder(),
             vector_store=vector_store,

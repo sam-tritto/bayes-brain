@@ -15,7 +15,7 @@ from bayes_brain.storage import (
     AsyncRedisStorage,
 )
 from bayes_brain.embeddings import LocalSentenceTransformerEmbedder
-from bayes_brain.router import BayesianToolRouter, AsyncBayesianToolRouter
+from bayes_brain.router import BayesianRouter, AsyncBayesianRouter
 
 
 def test_in_memory_storage_batch():
@@ -221,7 +221,7 @@ async def test_async_redis_storage_batch():
 
 def test_router_batch_routing_clustering():
     storage = InMemoryStorage()
-    router = BayesianToolRouter(storage=storage)
+    router = BayesianRouter(storage=storage)
     
     # Set tool priors to force deterministic/seeded behavior
     router.priors = {"tool_a": (10.0, 2.0), "tool_b": (1.0, 10.0)}
@@ -257,7 +257,7 @@ def test_router_batch_routing_clustering():
 @pytest.mark.anyio
 async def test_async_router_batch_routing():
     storage = AsyncInMemoryStorage()
-    router = AsyncBayesianToolRouter(storage=storage)
+    router = AsyncBayesianRouter(storage=storage)
     
     router.priors = {"tool_a": (10.0, 2.0), "tool_b": (1.0, 10.0)}
     

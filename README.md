@@ -188,9 +188,6 @@ async def main():
 asyncio.run(main())
 ```
 
-> [!NOTE]
-> `BayesianToolRouter` and `AsyncBayesianToolRouter` are fully preserved as functional aliases for backward compatibility.
-
 ---
 
 ## Core Features & Advanced Operations

@@ -10,15 +10,13 @@ from mcp.server.fastmcp import FastMCP
 
 from bayes_brain.router import (
     AsyncBayesianRouter,
-    AsyncBayesianToolRouter,
     BayesianRouter,
-    BayesianToolRouter,
 )
 from bayes_brain.storage import AsyncSQLiteStorage, SQLiteStorage
 
 
 async def _get_all_beliefs(
-    router: Union[BayesianRouter, AsyncBayesianRouter, BayesianToolRouter, AsyncBayesianToolRouter]
+    router: Union[BayesianRouter, AsyncBayesianRouter]
 ) -> dict:
     """
     Retrieve all beliefs from the storage backend of the router.
@@ -388,7 +386,7 @@ def create_mcp_server(
     contextual_priors: Optional[List[Dict[str, Any]]] = None,
 ) -> FastMCP:
     """
-    Configure and return a FastMCP server wrapping an AsyncBayesianToolRouter instance.
+    Configure and return a FastMCP server wrapping an AsyncBayesianRouter instance.
 
     Args:
         server_name: The display name of the FastMCP server.

@@ -13,7 +13,7 @@ from bayes_brain.embeddings import (
     GeminiEmbedder,
     OpenAIEmbedder,
 )
-from bayes_brain.router import AsyncBayesianToolRouter
+from bayes_brain.router import AsyncBayesianRouter
 from bayes_brain.storage import (
     AsyncInMemoryStorage,
     AsyncSQLiteStorage,
@@ -193,7 +193,7 @@ class SyncMockEmbedder:
 @pytest.mark.anyio
 async def test_async_router_exact_match():
     storage = AsyncInMemoryStorage()
-    router = AsyncBayesianToolRouter(storage=storage, decay_factor=0.95)
+    router = AsyncBayesianRouter(storage=storage, decay_factor=0.95)
 
     tool = await router.aroute("web_search_query", ["search_api", "fallback_api"])
     assert tool in ["search_api", "fallback_api"]
@@ -210,7 +210,7 @@ async def test_async_router_exact_match():
 async def test_async_router_with_async_embedder():
     storage = AsyncInMemoryStorage()
     embedder = AsyncMockEmbedder()
-    router = AsyncBayesianToolRouter(storage=storage, embedder=embedder)
+    router = AsyncBayesianRouter(storage=storage, embedder=embedder)
 
     tool, trace = await router.aroute_with_trace("find math help", ["tool_math", "tool_search"])
     context_key_1 = await router._resolve_context_key("find math help")
@@ -224,7 +224,7 @@ async def test_async_router_with_async_embedder():
 async def test_async_router_with_sync_embedder():
     storage = AsyncInMemoryStorage()
     embedder = SyncMockEmbedder()
-    router = AsyncBayesianToolRouter(storage=storage, embedder=embedder)
+    router = AsyncBayesianRouter(storage=storage, embedder=embedder)
 
     tool, trace = await router.aroute_with_trace("find math help", ["tool_math", "tool_search"])
     context_key_1 = await router._resolve_context_key("find math help")
@@ -234,7 +234,7 @@ async def test_async_router_with_sync_embedder():
 @pytest.mark.anyio
 async def test_async_router_trace_feedback():
     storage = AsyncInMemoryStorage()
-    router = AsyncBayesianToolRouter(storage=storage)
+    router = AsyncBayesianRouter(storage=storage)
 
     chosen_tool, trace_id = await router.aroute_with_trace("context_a", ["tool_x"])
     assert chosen_tool == "tool_x"
@@ -251,7 +251,7 @@ async def test_async_router_trace_feedback():
 async def test_async_router_priors():
     storage = AsyncInMemoryStorage()
     priors = {"highly_reliable": (90.0, 10.0), "unreliable": (1.0, 99.0)}
-    router = AsyncBayesianToolRouter(storage=storage, priors=priors)
+    router = AsyncBayesianRouter(storage=storage, priors=priors)
 
     chosen = await router.aroute("some_task", ["highly_reliable", "unreliable"])
     assert chosen == "highly_reliable"
@@ -265,7 +265,7 @@ async def test_async_router_fallbacks(monkeypatch):
         raise RuntimeError("DB failure")
     monkeypatch.setattr(storage, "get_tool_params", mock_get_tool_params)
 
-    router = AsyncBayesianToolRouter(storage=storage, fallback_tool="fallback")
+    router = AsyncBayesianRouter(storage=storage, fallback_tool="fallback")
     chosen = await router.aroute("query", ["tool_a", "fallback"])
     assert chosen == "fallback"
 
@@ -322,7 +322,7 @@ async def test_async_router_signed_trace_ids():
     storage = AsyncInMemoryStorage()
     
     # 1. Custom secret key (str)
-    router = AsyncBayesianToolRouter(storage=storage, secret_key="my_super_secret_key")
+    router = AsyncBayesianRouter(storage=storage, secret_key="my_super_secret_key")
     chosen, trace_id = await router.aroute_with_trace("query", ["tool_a"])
     assert "." in trace_id
     
@@ -331,12 +331,12 @@ async def test_async_router_signed_trace_ids():
     assert tool_name == "tool_a"
     
     # Verify with another router using the same key succeeds
-    router2 = AsyncBayesianToolRouter(storage=storage, secret_key="my_super_secret_key")
+    router2 = AsyncBayesianRouter(storage=storage, secret_key="my_super_secret_key")
     ctx_key2, tool_name2 = router2._decode_trace_id(trace_id)
     assert tool_name2 == "tool_a"
     
     # Verify with another router using a different key fails
-    router3 = AsyncBayesianToolRouter(storage=storage, secret_key="different_secret_key")
+    router3 = AsyncBayesianRouter(storage=storage, secret_key="different_secret_key")
     with pytest.raises(ValueError, match="Invalid or corrupted trace ID"):
         router3._decode_trace_id(trace_id)
         
@@ -357,8 +357,8 @@ async def test_async_router_signed_trace_ids():
         router._decode_trace_id(payload_part)
         
     # Random key auto-generation works
-    router_random1 = AsyncBayesianToolRouter(storage=storage)
-    router_random2 = AsyncBayesianToolRouter(storage=storage)
+    router_random1 = AsyncBayesianRouter(storage=storage)
+    router_random2 = AsyncBayesianRouter(storage=storage)
     
     _, trace_id_rand = await router_random1.aroute_with_trace("query", ["tool_a"])
     # Decoding with same router succeeds
@@ -391,7 +391,7 @@ async def test_async_router_contextual_priors():
     
     embedder = SyncMockEmbedder()
     
-    router = AsyncBayesianToolRouter(
+    router = AsyncBayesianRouter(
         storage=storage,
         embedder=embedder,
         contextual_priors=contextual_priors,
@@ -414,7 +414,7 @@ async def test_async_router_contextual_priors():
 
     # Test routing with contextual priors (Thompson sampling cold start)
     storage_clean = AsyncInMemoryStorage()
-    router_clean = AsyncBayesianToolRouter(
+    router_clean = AsyncBayesianRouter(
         storage=storage_clean,
         embedder=embedder,
         contextual_priors=contextual_priors
@@ -430,7 +430,7 @@ async def test_async_router_contextual_priors():
 
     # Route batch
     storage_batch = AsyncInMemoryStorage()
-    router_batch = AsyncBayesianToolRouter(
+    router_batch = AsyncBayesianRouter(
         storage=storage_batch,
         embedder=embedder,
         contextual_priors=contextual_priors

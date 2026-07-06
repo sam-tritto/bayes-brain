@@ -4,7 +4,7 @@ import pytest
 from typing import Sequence
 
 from bayes_brain.embeddings import VectorContextStore, AsyncVectorContextStore
-from bayes_brain.router import BayesianToolRouter, AsyncBayesianToolRouter
+from bayes_brain.router import BayesianRouter, AsyncBayesianRouter
 from bayes_brain.storage import InMemoryStorage, SQLiteStorage, AsyncInMemoryStorage, AsyncSQLiteStorage
 
 
@@ -22,17 +22,17 @@ class SimpleMockEmbedder:
 def test_linear_initialization_validation():
     # Linear modes require an embedder
     with pytest.raises(ValueError, match="Linear bandit modes .* require a ContextEmbedder"):
-        BayesianToolRouter(mode="lints", embedder=None)
+        BayesianRouter(mode="lints", embedder=None)
 
     with pytest.raises(ValueError, match="Linear bandit modes .* require a ContextEmbedder"):
-        BayesianToolRouter(mode="linucb", embedder=None)
+        BayesianRouter(mode="linucb", embedder=None)
 
     # Valid initialization
     embedder = SimpleMockEmbedder()
-    router = BayesianToolRouter(mode="lints", embedder=embedder)
+    router = BayesianRouter(mode="lints", embedder=embedder)
     assert router.mode == "lints"
 
-    router_ucb = BayesianToolRouter(mode="linucb", embedder=embedder, diagonal_covariance=True)
+    router_ucb = BayesianRouter(mode="linucb", embedder=embedder, diagonal_covariance=True)
     assert router_ucb.mode == "linucb"
     assert router_ucb.diagonal_covariance is True
 
@@ -40,7 +40,7 @@ def test_linear_initialization_validation():
 def test_lints_routing_and_convergence():
     embedder = SimpleMockEmbedder()
     storage = InMemoryStorage()
-    router = BayesianToolRouter(
+    router = BayesianRouter(
         storage=storage,
         embedder=embedder,
         mode="lints",
@@ -73,7 +73,7 @@ def test_lints_routing_and_convergence():
 def test_lints_diagonal_covariance_routing():
     embedder = SimpleMockEmbedder()
     storage = InMemoryStorage()
-    router = BayesianToolRouter(
+    router = BayesianRouter(
         storage=storage,
         embedder=embedder,
         mode="lints",
@@ -96,7 +96,7 @@ def test_lints_diagonal_covariance_routing():
 def test_linucb_routing_and_convergence():
     embedder = SimpleMockEmbedder()
     storage = InMemoryStorage()
-    router = BayesianToolRouter(
+    router = BayesianRouter(
         storage=storage,
         embedder=embedder,
         mode="linucb",
@@ -120,7 +120,7 @@ def test_linucb_routing_and_convergence():
 def test_linucb_diagonal_covariance():
     embedder = SimpleMockEmbedder()
     storage = InMemoryStorage()
-    router = BayesianToolRouter(
+    router = BayesianRouter(
         storage=storage,
         embedder=embedder,
         mode="linucb",
@@ -145,7 +145,7 @@ def test_linear_sqlite_storage(tmp_path):
     storage = SQLiteStorage(db_path=str(db_file))
     embedder = SimpleMockEmbedder()
     
-    router = BayesianToolRouter(
+    router = BayesianRouter(
         storage=storage,
         embedder=embedder,
         mode="lints",
@@ -158,7 +158,7 @@ def test_linear_sqlite_storage(tmp_path):
     
     # Reload from same DB file to ensure storage persistence
     storage2 = SQLiteStorage(db_path=str(db_file))
-    router2 = BayesianToolRouter(
+    router2 = BayesianRouter(
         storage=storage2,
         embedder=embedder,
         mode="lints",
@@ -180,7 +180,7 @@ async def test_async_lints_routing_and_feedback(tmp_path):
     storage = AsyncSQLiteStorage(db_path=str(db_file))
     embedder = SimpleMockEmbedder()
     
-    router = AsyncBayesianToolRouter(
+    router = AsyncBayesianRouter(
         storage=storage,
         embedder=embedder,
         mode="lints",

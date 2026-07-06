@@ -588,7 +588,7 @@ class BayesianRouter:
 
         except Exception as e:
             logger.exception(
-                "BayesianToolRouter routing failed. Triggering fail-safe fallback."
+                "BayesianRouter routing failed. Triggering fail-safe fallback."
             )
             if self.telemetry_hook:
                 try:
@@ -734,7 +734,7 @@ class BayesianRouter:
                 return expected_reward, uncertainty
 
         except Exception as e:
-            logger.exception("BayesianToolRouter feedback submission failed.")
+            logger.exception("BayesianRouter feedback submission failed.")
             if self.telemetry_hook:
                 try:
                     self.telemetry_hook(
@@ -877,7 +877,7 @@ class BayesianRouter:
                 return expected_reward, uncertainty
 
         except Exception as e:
-            logger.exception("BayesianToolRouter feedback by trace submission failed.")
+            logger.exception("BayesianRouter feedback by trace submission failed.")
             if self.telemetry_hook:
                 try:
                     self.telemetry_hook(
@@ -984,7 +984,7 @@ class BayesianRouter:
                 
                 return expected_reward, uncertainty
         except Exception as e:
-            logger.exception("BayesianToolRouter get_tool_beliefs failed.")
+            logger.exception("BayesianRouter get_tool_beliefs failed.")
             if self.telemetry_hook:
                 try:
                     self.telemetry_hook(
@@ -1274,7 +1274,7 @@ class BayesianRouter:
                 return results
 
         except Exception as e:
-            logger.exception("BayesianToolRouter batch routing failed. Triggering fail-safe fallback.")
+            logger.exception("BayesianRouter batch routing failed. Triggering fail-safe fallback.")
             if self.telemetry_hook:
                 try:
                     self.telemetry_hook(
@@ -1441,7 +1441,7 @@ class BayesianRouter:
                     self.storage.log_feedback(trace_id, reward_val)
 
         except Exception as e:
-            logger.exception("BayesianToolRouter batch feedback submission failed.")
+            logger.exception("BayesianRouter batch feedback submission failed.")
             if self.telemetry_hook:
                 try:
                     self.telemetry_hook("feedback_batch_failure", e, {"feedbacks": feedbacks})
@@ -2017,7 +2017,7 @@ class AsyncBayesianRouter:
 
         except Exception as e:
             logger.exception(
-                "AsyncBayesianToolRouter routing failed. Triggering fail-safe fallback."
+                "AsyncBayesianRouter routing failed. Triggering fail-safe fallback."
             )
             await self._call_telemetry(
                 "route_failure",
@@ -2169,7 +2169,7 @@ class AsyncBayesianRouter:
                 return expected_reward, uncertainty
 
         except Exception as e:
-            logger.exception("AsyncBayesianToolRouter feedback submission failed.")
+            logger.exception("AsyncBayesianRouter feedback submission failed.")
             await self._call_telemetry(
                 "feedback_failure",
                 e,
@@ -2305,7 +2305,7 @@ class AsyncBayesianRouter:
                 return expected_reward, uncertainty
 
         except Exception as e:
-            logger.exception("AsyncBayesianToolRouter feedback by trace submission failed.")
+            logger.exception("AsyncBayesianRouter feedback by trace submission failed.")
             await self._call_telemetry(
                 "feedback_by_trace_failure",
                 e,
@@ -2418,7 +2418,7 @@ class AsyncBayesianRouter:
                 
                 return expected_reward, uncertainty
         except Exception as e:
-            logger.exception("AsyncBayesianToolRouter aget_tool_beliefs failed.")
+            logger.exception("AsyncBayesianRouter aget_tool_beliefs failed.")
             await self._call_telemetry(
                 "get_tool_beliefs_failure",
                 e,
@@ -2720,7 +2720,7 @@ class AsyncBayesianRouter:
                 return results
 
         except Exception as e:
-            logger.exception("AsyncBayesianToolRouter batch routing failed. Triggering fail-safe fallback.")
+            logger.exception("AsyncBayesianRouter batch routing failed. Triggering fail-safe fallback.")
             await self._call_telemetry(
                 "route_batch_failure",
                 e,
@@ -2889,13 +2889,8 @@ class AsyncBayesianRouter:
                     await self.storage.log_feedback(trace_id, reward_val)
 
         except Exception as e:
-            logger.exception("AsyncBayesianToolRouter batch feedback submission failed.")
+            logger.exception("AsyncBayesianRouter batch feedback submission failed.")
             await self._call_telemetry("feedback_batch_failure", e, {"feedbacks": feedbacks})
-
-
-# Backward compatibility aliases
-BayesianToolRouter = BayesianRouter
-AsyncBayesianToolRouter = AsyncBayesianRouter
 
 
 

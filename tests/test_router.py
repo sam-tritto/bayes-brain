@@ -3,7 +3,7 @@ from typing import Optional, Sequence
 import pytest
 
 from bayes_brain.embeddings import VectorContextStore
-from bayes_brain.router import BayesianToolRouter
+from bayes_brain.router import BayesianRouter
 from bayes_brain.storage import InMemoryStorage
 
 
@@ -35,7 +35,7 @@ class MockEmbedder:
 
 def test_router_without_embeddings():
     storage = InMemoryStorage()
-    router = BayesianToolRouter(storage=storage, decay_factor=0.95)
+    router = BayesianRouter(storage=storage, decay_factor=0.95)
 
     # Route should select from candidate tools
     tool = router.route("web_search_query", ["search_api", "fallback_api"])
@@ -60,7 +60,7 @@ def test_router_without_embeddings():
 def test_router_with_embeddings():
     storage = InMemoryStorage()
     embedder = MockEmbedder()
-    router = BayesianToolRouter(
+    router = BayesianRouter(
         storage=storage,
         embedder=embedder,
         decay_factor=1.0,
@@ -84,7 +84,7 @@ def test_router_with_embeddings():
 
 def test_router_trace_feedback():
     storage = InMemoryStorage()
-    router = BayesianToolRouter(storage=storage)
+    router = BayesianRouter(storage=storage)
 
     chosen_tool, trace_id = router.route_with_trace("context_a", ["tool_x"])
     assert chosen_tool == "tool_x"
@@ -105,7 +105,7 @@ def test_router_priors_seeding():
         "highly_reliable": (90.0, 10.0),
         "unreliable": (1.0, 99.0)
     }
-    router = BayesianToolRouter(storage=storage, priors=priors)
+    router = BayesianRouter(storage=storage, priors=priors)
 
     # Highly reliable should be preferred
     chosen = router.route("some_task", ["highly_reliable", "unreliable"])
@@ -138,7 +138,7 @@ def test_router_with_custom_vector_store():
     embedder = MockEmbedder()
     custom_store = CustomMemoryVectorStore()
     
-    router = BayesianToolRouter(
+    router = BayesianRouter(
         storage=storage,
         embedder=embedder,
         vector_store=custom_store
@@ -158,7 +158,7 @@ def test_router_with_custom_vector_store():
 
 def test_router_exact_match_hashing_and_normalization():
     storage = InMemoryStorage()
-    router = BayesianToolRouter(storage=storage)
+    router = BayesianRouter(storage=storage)
 
     # Clean query
     key1 = router._resolve_context_key("my context query")
@@ -184,7 +184,7 @@ def test_router_embedder_failure_fallback_hashing(caplog):
             raise ValueError("Embedding engine offline")
 
     storage = InMemoryStorage()
-    router = BayesianToolRouter(storage=storage, embedder=CrashingEmbedder())
+    router = BayesianRouter(storage=storage, embedder=CrashingEmbedder())
 
     with caplog.at_level("WARNING"):
         key = router._resolve_context_key("test warning logs")
@@ -198,7 +198,7 @@ def test_router_embedder_failure_fallback_hashing(caplog):
 def test_router_no_embedder_warning(caplog):
     storage = InMemoryStorage()
     with caplog.at_level("WARNING"):
-        BayesianToolRouter(storage=storage)
+        BayesianRouter(storage=storage)
     
     warnings = [rec.message for rec in caplog.records if rec.levelname == "WARNING"]
     assert any("No ContextEmbedder provided" in w for w in warnings)
@@ -206,7 +206,7 @@ def test_router_no_embedder_warning(caplog):
 
 def test_continuous_rewards():
     storage = InMemoryStorage()
-    router = BayesianToolRouter(storage=storage, decay_factor=0.95)
+    router = BayesianRouter(storage=storage, decay_factor=0.95)
 
     # Resolve context key
     key = router._resolve_context_key("continuous_task")
@@ -260,7 +260,7 @@ def test_router_fallback_on_storage_failure(monkeypatch):
     def mock_telemetry(event, exc, ctx):
         telemetry_events.append((event, exc, ctx))
         
-    router = BayesianToolRouter(
+    router = BayesianRouter(
         storage=storage,
         fallback_tool="fallback_tool",
         telemetry_hook=mock_telemetry
@@ -293,7 +293,7 @@ def test_router_fallback_on_sampling_failure(monkeypatch):
     def mock_telemetry(event, exc, ctx):
         telemetry_events.append((event, exc, ctx))
         
-    router = BayesianToolRouter(
+    router = BayesianRouter(
         storage=storage,
         telemetry_hook=mock_telemetry
     )
@@ -318,7 +318,7 @@ def test_router_fallback_on_vector_store_failure():
     def mock_telemetry(event, exc, ctx):
         telemetry_events.append((event, exc, ctx))
         
-    router = BayesianToolRouter(
+    router = BayesianRouter(
         storage=storage,
         embedder=embedder,
         vector_store=FailingVectorStore(),
@@ -343,7 +343,7 @@ def test_feedback_fallback_on_failure(monkeypatch):
     def mock_telemetry(event, exc, ctx):
         telemetry_events.append((event, exc, ctx))
         
-    router = BayesianToolRouter(
+    router = BayesianRouter(
         storage=storage,
         telemetry_hook=mock_telemetry
     )
@@ -382,7 +382,7 @@ def test_router_signed_trace_ids():
     storage = InMemoryStorage()
     
     # 1. Custom secret key (str)
-    router = BayesianToolRouter(storage=storage, secret_key="my_super_secret_key")
+    router = BayesianRouter(storage=storage, secret_key="my_super_secret_key")
     chosen, trace_id = router.route_with_trace("query", ["tool_a"])
     assert "." in trace_id
     
@@ -391,12 +391,12 @@ def test_router_signed_trace_ids():
     assert tool_name == "tool_a"
     
     # Verify with another router using the same key succeeds
-    router2 = BayesianToolRouter(storage=storage, secret_key="my_super_secret_key")
+    router2 = BayesianRouter(storage=storage, secret_key="my_super_secret_key")
     ctx_key2, tool_name2 = router2._decode_trace_id(trace_id)
     assert tool_name2 == "tool_a"
     
     # Verify with another router using a different key fails
-    router3 = BayesianToolRouter(storage=storage, secret_key="different_secret_key")
+    router3 = BayesianRouter(storage=storage, secret_key="different_secret_key")
     with pytest.raises(ValueError, match="Invalid or corrupted trace ID"):
         router3._decode_trace_id(trace_id)
         
@@ -417,8 +417,8 @@ def test_router_signed_trace_ids():
         router._decode_trace_id(payload_part)
         
     # Random key auto-generation works
-    router_random1 = BayesianToolRouter(storage=storage)
-    router_random2 = BayesianToolRouter(storage=storage)
+    router_random1 = BayesianRouter(storage=storage)
+    router_random2 = BayesianRouter(storage=storage)
     
     _, trace_id_rand = router_random1.route_with_trace("query", ["tool_a"])
     # Decoding with same router succeeds
@@ -433,16 +433,16 @@ def test_router_contextual_priors():
     
     # 1. Validation test
     with pytest.raises(ValueError, match="Each contextual prior must contain a 'priors' dictionary"):
-        BayesianToolRouter(storage=storage, contextual_priors=[{"pattern": "math"}])
+        BayesianRouter(storage=storage, contextual_priors=[{"pattern": "math"}])
 
     with pytest.raises(ValueError, match="Prior parameters for tool .* must be a tuple/list"):
-        BayesianToolRouter(storage=storage, contextual_priors=[{
+        BayesianRouter(storage=storage, contextual_priors=[{
             "pattern": "math",
             "priors": {"calculator": (10,)}
         }])
 
     with pytest.raises(ValueError, match="Each contextual prior must specify at least one of"):
-        BayesianToolRouter(storage=storage, contextual_priors=[{
+        BayesianRouter(storage=storage, contextual_priors=[{
             "priors": {"calculator": (10, 1)}
         }])
 
@@ -472,7 +472,7 @@ def test_router_contextual_priors():
     ]
     
     embedder = MockEmbedder()
-    router = BayesianToolRouter(
+    router = BayesianRouter(
         storage=storage,
         embedder=embedder,
         contextual_priors=contextual_priors,
@@ -494,7 +494,7 @@ def test_router_contextual_priors():
     assert prior_search_beta2 == 1.0
 
     # Test Precomputed Embedding Match
-    router_embed = BayesianToolRouter(
+    router_embed = BayesianRouter(
         storage=InMemoryStorage(),
         embedder=embedder,
         contextual_priors=[
@@ -512,7 +512,7 @@ def test_router_contextual_priors():
 
     # Test routing with contextual priors (Thompson sampling cold start)
     storage_clean = InMemoryStorage()
-    router_clean = BayesianToolRouter(
+    router_clean = BayesianRouter(
         storage=storage_clean,
         embedder=embedder,
         contextual_priors=contextual_priors
@@ -528,7 +528,7 @@ def test_router_contextual_priors():
 
     # Route batch
     storage_batch = InMemoryStorage()
-    router_batch = BayesianToolRouter(
+    router_batch = BayesianRouter(
         storage=storage_batch,
         embedder=embedder,
         contextual_priors=contextual_priors

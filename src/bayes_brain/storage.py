@@ -38,6 +38,12 @@ class BaseStorage(abc.ABC):
         they do not drop below the flat prior baseline of 1.0:
         alpha_new = max(1.0, alpha_old * decay_factor + reward)
         beta_new = max(1.0, beta_old * decay_factor + (1 - reward))
+
+        Note: Clamping alpha and beta to a lower bound of 1.0 is critical for standard Thompson Sampling.
+        If they were allowed to drop below 1.0 (e.g. under aggressive decay), the Beta probability density
+        function (PDF) would turn into a bimodal U-shape. This would force random draws to spike violently
+        to either absolute 0 or absolute 1, causing completely erratic routing behavior. Clamping protects
+        the stability of the distribution's mode.
         """
         pass
 
@@ -1288,6 +1294,12 @@ class AsyncBaseStorage(abc.ABC):
         they do not drop below the flat prior baseline of 1.0:
         alpha_new = max(1.0, alpha_old * decay_factor + reward)
         beta_new = max(1.0, beta_old * decay_factor + (1 - reward))
+
+        Note: Clamping alpha and beta to a lower bound of 1.0 is critical for standard Thompson Sampling.
+        If they were allowed to drop below 1.0 (e.g. under aggressive decay), the Beta probability density
+        function (PDF) would turn into a bimodal U-shape. This would force random draws to spike violently
+        to either absolute 0 or absolute 1, causing completely erratic routing behavior. Clamping protects
+        the stability of the distribution's mode.
         """
         pass
 

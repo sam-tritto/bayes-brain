@@ -4,7 +4,7 @@ import pytest
 from typing import Sequence
 
 from bayes_brain.embeddings import VectorContextStore, AsyncVectorContextStore
-from bayes_brain.router import BayesianToolRouter, AsyncBayesianToolRouter
+from bayes_brain.router import BayesianRouter, AsyncBayesianRouter
 from bayes_brain.storage import InMemoryStorage, SQLiteStorage, AsyncInMemoryStorage, AsyncSQLiteStorage
 
 
@@ -25,14 +25,14 @@ def test_hybrid_initialization_validation():
     
     # Hybrid mode must not be supported with clustering mode
     with pytest.raises(ValueError, match="Hybrid mode is only supported with linear bandit modes"):
-        BayesianToolRouter(mode="clustering", hybrid=True, embedder=embedder)
+        BayesianRouter(mode="clustering", hybrid=True, embedder=embedder)
 
     # Hybrid mode requires embedder
     with pytest.raises(ValueError, match="Linear bandit modes .* require a ContextEmbedder"):
-        BayesianToolRouter(mode="lints", hybrid=True, embedder=None)
+        BayesianRouter(mode="lints", hybrid=True, embedder=None)
 
     # Valid initialization
-    router = BayesianToolRouter(mode="lints", hybrid=True, embedder=embedder)
+    router = BayesianRouter(mode="lints", hybrid=True, embedder=embedder)
     assert router.hybrid is True
     assert router.mode == "lints"
 
@@ -46,7 +46,7 @@ def test_hybrid_routing_and_convergence():
         "tool_other": [0.0, 1.0]
     }
     
-    router = BayesianToolRouter(
+    router = BayesianRouter(
         storage=storage,
         embedder=embedder,
         mode="linucb",
@@ -90,7 +90,7 @@ def test_hybrid_generalization_cold_start():
         "tool_other_v2": [0.1, 0.9],  # very similar to tool_other
     }
     
-    router = BayesianToolRouter(
+    router = BayesianRouter(
         storage=storage,
         embedder=embedder,
         mode="linucb",
@@ -125,7 +125,7 @@ def test_hybrid_metadata_string_embedding():
         "tool_other": "send email notifications"
     }
     
-    router = BayesianToolRouter(
+    router = BayesianRouter(
         storage=storage,
         embedder=embedder,
         mode="linucb",
@@ -153,7 +153,7 @@ def test_hybrid_batch_routing_and_feedback():
         "tool_other": [0.0, 1.0]
     }
     
-    router = BayesianToolRouter(
+    router = BayesianRouter(
         storage=storage,
         embedder=embedder,
         mode="linucb",
@@ -186,7 +186,7 @@ async def test_async_hybrid_routing_and_feedback(tmp_path):
         "tool_other": [0.0, 1.0]
     }
     
-    router = AsyncBayesianToolRouter(
+    router = AsyncBayesianRouter(
         storage=storage,
         embedder=embedder,
         mode="linucb",
