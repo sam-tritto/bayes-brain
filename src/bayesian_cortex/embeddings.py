@@ -58,7 +58,7 @@ class VectorStoreProtocol(Protocol):
 class LocalSentenceTransformerEmbedder:
     """
     Batteries-included embedder using sentence-transformers.
-    Loaded lazily, requiring `pip install 'bayesian-cortex[local-ml]'`.
+    Loaded lazily, requiring `pip install 'bayesian_cortex[local-ml]'`.
     """
 
     def __init__(self, model_name: str = "all-MiniLM-L6-v2") -> None:
@@ -73,7 +73,7 @@ class LocalSentenceTransformerEmbedder:
             except ImportError:
                 raise ImportError(
                     "The sentence-transformers package is required for LocalSentenceTransformerEmbedder. "
-                    "Please install it with: pip install 'bayesian-cortex[local-ml]'"
+                    "Please install it with: pip install 'bayesian_cortex[local-ml]'"
                 )
             self._model = SentenceTransformer(self.model_name)
         return self._model

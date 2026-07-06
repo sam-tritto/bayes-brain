@@ -2,7 +2,7 @@
   <img src="assets/logo.png?v=2" alt="BayesianCortex Logo" width="400">
   <br>
   <br>
-  <a href="https://pypi.org/project/bayesian-cortex/"><img src="https://img.shields.io/pypi/v/bayesian-cortex.svg" alt="PyPI version"></a>
+  <a href="https://pypi.org/project/bayesian_cortex/"><img src="https://img.shields.io/pypi/v/bayesian_cortex.svg" alt="PyPI version"></a>
   <a href="https://docs.astral.sh/uv/"><img src="https://img.shields.io/badge/uv-%23DE5FE9.svg?style=flat&logo=uv&logoColor=white" alt="uv"></a>
   <a href="https://github.com/sam-tritto/bayesian-cortex"><img src="https://img.shields.io/badge/coverage-61%25-yellow.svg" alt="Coverage Status"></a>
   <a href="https://opensource.org/licenses/MIT"><img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="License: MIT"></a>
@@ -97,10 +97,10 @@ Install using `uv` or standard pip:
 
 ```bash
 # Core package (In-memory, SQLite, and Redis support)
-uv pip install bayesian-cortex
+uv pip install bayesian_cortex
 
 # Install with local embedding support
-uv pip install "bayesian-cortex[local-ml]"
+uv pip install "bayesian_cortex[local-ml]"
 ```
 
 For advanced features, ensure the following database dependencies are satisfied:
