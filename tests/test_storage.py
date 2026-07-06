@@ -27,6 +27,13 @@ def test_in_memory_storage():
     assert new_a == 5.5 * 0.5 + 1.0
     assert new_b == 4.2 * 0.5 + 0.0
 
+    # Verify decay lower-bounding (beta bimodality prevention)
+    # 2.1 * 0.1 + 0.0 = 0.21, should be capped at 1.0
+    new_a, new_b = storage.decay_and_update("ctx_test", "tool_a", 0.1, 0.0)
+    assert new_a == max(1.0, 3.75 * 0.1 + 0.0)
+    assert new_b == max(1.0, 2.1 * 0.1 + 1.0)
+    assert new_a == 1.0
+
     # Metadata
     storage.save_metadata("my_key", "my_val")
     assert storage.load_metadata("my_key") == "my_val"
@@ -55,6 +62,13 @@ def test_sqlite_storage():
         new_a, new_b = storage.decay_and_update("ctx_1", "tool_1", 0.9, 1.0)
         assert new_a == 10.0 * 0.9 + 1.0
         assert new_b == 2.0 * 0.9 + 0.0
+
+        # Verify decay lower-bounding (beta bimodality prevention)
+        # 1.8 * 0.1 + 0.0 = 0.18, should be capped at 1.0
+        new_a, new_b = storage.decay_and_update("ctx_1", "tool_1", 0.1, 0.0)
+        assert new_a == max(1.0, 10.0 * 0.1 + 0.0)
+        assert new_b == max(1.0, 1.8 * 0.1 + 1.0)
+        assert new_a == 1.0
 
         # Test metadata persistence
         storage.save_metadata("vector_data", "serialized_vector_json")

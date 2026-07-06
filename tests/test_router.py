@@ -45,16 +45,16 @@ def test_router_without_embeddings():
     router.feedback("web_search_query", "search_api", success=True)
     key = router._resolve_context_key("web_search_query")
     a_success, b_success = storage.get_tool_params(key, "search_api")
-    # Initial was (1, 1). Decayed: alpha = 1 * 0.95 + 1.0 = 1.95, beta = 1 * 0.95 + 0.0 = 0.95
+    # Initial was (1, 1). Decayed: alpha = max(1.0, 1 * 0.95 + 1.0) = 1.95, beta = max(1.0, 1 * 0.95 + 0.0) = 1.0
     assert a_success == pytest.approx(1.95)
-    assert b_success == pytest.approx(0.95)
+    assert b_success == pytest.approx(1.0)
 
     # Provide failure feedback
     router.feedback("web_search_query", "search_api", success=False)
     a_fail, b_fail = storage.get_tool_params(key, "search_api")
-    # Decayed: alpha = 1.95 * 0.95 + 0 = 1.8525, beta = 0.95 * 0.95 + 1.0 = 1.9025
+    # Decayed: alpha = max(1.0, 1.95 * 0.95 + 0) = 1.8525, beta = max(1.0, 1.0 * 0.95 + 1.0) = 1.95
     assert a_fail == pytest.approx(1.8525)
-    assert b_fail == pytest.approx(1.9025)
+    assert b_fail == pytest.approx(1.95)
 
 
 def test_router_with_embeddings():

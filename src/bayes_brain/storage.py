@@ -29,9 +29,10 @@ class BaseStorage(abc.ABC):
         self, context_key: str, tool_name: str, decay_factor: float, reward: float
     ) -> Tuple[float, float]:
         """
-        Atomically decay the current parameters and add the reward.
-        alpha_new = alpha_old * decay_factor + reward
-        beta_new = beta_old * decay_factor + (1 - reward)
+        Atomically decay the current parameters and add the reward, ensuring
+        they do not drop below the flat prior baseline of 1.0:
+        alpha_new = max(1.0, alpha_old * decay_factor + reward)
+        beta_new = max(1.0, beta_old * decay_factor + (1 - reward))
         """
         pass
 
@@ -108,8 +109,8 @@ class InMemoryStorage(BaseStorage):
     ) -> Tuple[float, float]:
         with self._lock:
             alpha, beta = self._data.get((context_key, tool_name), (1.0, 1.0))
-            new_alpha = alpha * decay_factor + reward
-            new_beta = beta * decay_factor + (1.0 - reward)
+            new_alpha = max(1.0, alpha * decay_factor + reward)
+            new_beta = max(1.0, beta * decay_factor + (1.0 - reward))
             self._data[(context_key, tool_name)] = (new_alpha, new_beta)
             return new_alpha, new_beta
 
@@ -243,8 +244,8 @@ class SQLiteStorage(BaseStorage):
             else:
                 alpha, beta = 1.0, 1.0
 
-            new_alpha = alpha * decay_factor + reward
-            new_beta = beta * decay_factor + (1.0 - reward)
+            new_alpha = max(1.0, alpha * decay_factor + reward)
+            new_beta = max(1.0, beta * decay_factor + (1.0 - reward))
 
             cursor.execute(
                 """
@@ -350,8 +351,8 @@ class RedisStorage(BaseStorage):
     if not alpha then alpha = 1.0 else alpha = tonumber(alpha) end
     if not beta then beta = 1.0 else beta = tonumber(beta) end
 
-    local new_alpha = alpha * decay + reward
-    local new_beta = beta * decay + reward_fail
+    local new_alpha = math.max(1.0, alpha * decay + reward)
+    local new_beta = math.max(1.0, beta * decay + reward_fail)
 
     redis.call('HSET', key, field_alpha, tostring(new_alpha), field_beta, tostring(new_beta))
     return {tostring(new_alpha), tostring(new_beta)}
