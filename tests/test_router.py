@@ -38,20 +38,20 @@ def test_router_without_embeddings():
     router = BayesianRouter(storage=storage, decay_factor=0.95)
 
     # Route should select from candidate tools
-    tool = router.route("web_search_query", ["search_api", "fallback_api"])
-    assert tool in ["search_api", "fallback_api"]
+    candidate_name = router.route("web_search_query", ["search_api", "fallback_api"])
+    assert candidate_name in ["search_api", "fallback_api"]
 
     # Provide feedback
     router.feedback("web_search_query", "search_api", success=True)
     key = router._resolve_context_key("web_search_query")
-    a_success, b_success = storage.get_tool_params(key, "search_api")
+    a_success, b_success = storage.get_candidate_params(key, "search_api")
     # Initial was (1, 1). Decayed: alpha = max(1.0, 1 * 0.95 + 1.0) = 1.95, beta = max(1.0, 1 * 0.95 + 0.0) = 1.0
     assert a_success == pytest.approx(1.95)
     assert b_success == pytest.approx(1.0)
 
     # Provide failure feedback
     router.feedback("web_search_query", "search_api", success=False)
-    a_fail, b_fail = storage.get_tool_params(key, "search_api")
+    a_fail, b_fail = storage.get_candidate_params(key, "search_api")
     # Decayed: alpha = max(1.0, 1.95 * 0.95 + 0) = 1.8525, beta = max(1.0, 1.0 * 0.95 + 1.0) = 1.95
     assert a_fail == pytest.approx(1.8525)
     assert b_fail == pytest.approx(1.95)
@@ -86,14 +86,14 @@ def test_router_trace_feedback():
     storage = InMemoryStorage()
     router = BayesianRouter(storage=storage)
 
-    chosen_tool, trace_id = router.route_with_trace("context_a", ["tool_x"])
-    assert chosen_tool == "tool_x"
+    chosen_candidate, trace_id = router.route_with_trace("context_a", ["tool_x"])
+    assert chosen_candidate == "tool_x"
 
     # Feedback using trace ID
     router.feedback_by_trace(trace_id, success=True)
     
     key = router._resolve_context_key("context_a")
-    alpha, beta = storage.get_tool_params(key, "tool_x")
+    alpha, beta = storage.get_candidate_params(key, "tool_x")
     # (1*1 + 1) = 2.0, (1*1 + 0) = 1.0
     assert alpha == 2.0
     assert beta == 1.0
@@ -113,7 +113,7 @@ def test_router_priors_seeding():
 
     # Verify storage contains the seeded priors
     key = router._resolve_context_key("some_task")
-    a_rel, b_rel = storage.get_tool_params(key, "highly_reliable")
+    a_rel, b_rel = storage.get_candidate_params(key, "highly_reliable")
     assert a_rel == 90.0
     assert b_rel == 10.0
 
@@ -213,7 +213,7 @@ def test_continuous_rewards():
 
     # 1. Test feedback using reward float
     router.feedback("continuous_task", "tool_a", reward=0.8)
-    a, b = storage.get_tool_params(key, "tool_a")
+    a, b = storage.get_candidate_params(key, "tool_a")
     # alpha: max(1.0, 1 * 0.95 + 0.8) = 1.75
     # beta: max(1.0, 1 * 0.95 + 0.2) = 1.15
     assert a == pytest.approx(1.75)
@@ -224,7 +224,7 @@ def test_continuous_rewards():
     router.feedback_by_trace(trace_id, reward=0.4)
     # alpha: max(1.0, 1.75 * 0.95 + 0.4) = 1.6625 + 0.4 = 2.0625
     # beta: max(1.0, 1.15 * 0.95 + 0.6) = 1.0925 + 0.6 = 1.6925
-    a2, b2 = storage.get_tool_params(key, "tool_a")
+    a2, b2 = storage.get_candidate_params(key, "tool_a")
     assert a2 == pytest.approx(2.0625)
     assert b2 == pytest.approx(1.6925)
 
@@ -251,10 +251,10 @@ def test_router_fallback_on_storage_failure(monkeypatch):
     import numpy as np
     storage = InMemoryStorage()
     
-    # Mock storage to fail on get_tool_params
-    def mock_get_tool_params(context_key, tool_name):
+    # Mock storage to fail on get_candidate_params
+    def mock_get_candidate_params(context_key, candidate_name):
         raise RuntimeError("DB connection lost")
-    monkeypatch.setattr(storage, "get_tool_params", mock_get_tool_params)
+    monkeypatch.setattr(storage, "get_candidate_params", mock_get_candidate_params)
     
     telemetry_events = []
     def mock_telemetry(event, exc, ctx):
@@ -262,20 +262,20 @@ def test_router_fallback_on_storage_failure(monkeypatch):
         
     router = BayesianRouter(
         storage=storage,
-        fallback_tool="fallback_tool",
+        fallback_candidate="fallback_candidate",
         telemetry_hook=mock_telemetry
     )
     
-    # Route with fallback_tool present in candidate list
-    chosen, trace_id = router.route_with_trace("query", ["tool_a", "fallback_tool"])
-    assert chosen == "fallback_tool"
+    # Route with fallback_candidate present in candidate list
+    chosen, trace_id = router.route_with_trace("query", ["tool_a", "fallback_candidate"])
+    assert chosen == "fallback_candidate"
     assert trace_id is not None
     assert len(telemetry_events) == 1
     assert telemetry_events[0][0] == "route_failure"
     assert isinstance(telemetry_events[0][1], RuntimeError)
     assert telemetry_events[0][2]["context_text"] == "query"
 
-    # Route with fallback_tool NOT present in candidate list (should fall back to first candidate)
+    # Route with fallback_candidate NOT present in candidate list (should fall back to first candidate)
     chosen_first, _ = router.route_with_trace("query", ["tool_a", "tool_b"])
     assert chosen_first == "tool_a"
 
@@ -335,7 +335,7 @@ def test_feedback_fallback_on_failure(monkeypatch):
     storage = InMemoryStorage()
     
     # Mock storage to fail on decay_and_update
-    def mock_decay_and_update(context_key, tool_name, decay_factor, reward_val):
+    def mock_decay_and_update(context_key, candidate_name, decay_factor, reward_val):
         raise RuntimeError("Write failed")
     monkeypatch.setattr(storage, "decay_and_update", mock_decay_and_update)
     
@@ -365,16 +365,16 @@ def test_feedback_fallback_on_failure(monkeypatch):
     assert len(telemetry_events) == 2
     assert telemetry_events[1][0] == "feedback_by_trace_failure"
 
-    # 3. Test get_tool_beliefs fallback
-    def mock_get_tool_params(context_key, tool_name):
+    # 3. Test get_candidate_beliefs fallback
+    def mock_get_candidate_params(context_key, candidate_name):
         raise RuntimeError("Read failed")
-    monkeypatch.setattr(storage, "get_tool_params", mock_get_tool_params)
+    monkeypatch.setattr(storage, "get_candidate_params", mock_get_candidate_params)
     
-    alpha_beliefs, beta_beliefs = router.get_tool_beliefs("query", "tool_a")
+    alpha_beliefs, beta_beliefs = router.get_candidate_beliefs("query", "tool_a")
     assert alpha_beliefs == 1.0
     assert beta_beliefs == 1.0
     assert len(telemetry_events) == 3
-    assert telemetry_events[2][0] == "get_tool_beliefs_failure"
+    assert telemetry_events[2][0] == "get_candidate_beliefs_failure"
 
 
 def test_router_signed_trace_ids():
@@ -387,13 +387,13 @@ def test_router_signed_trace_ids():
     assert "." in trace_id
     
     # Decode and verify it succeeds
-    ctx_key, tool_name = router._decode_trace_id(trace_id)
-    assert tool_name == "tool_a"
+    ctx_key, candidate_name = router._decode_trace_id(trace_id)
+    assert candidate_name == "tool_a"
     
     # Verify with another router using the same key succeeds
     router2 = BayesianRouter(storage=storage, secret_key="my_super_secret_key")
-    ctx_key2, tool_name2 = router2._decode_trace_id(trace_id)
-    assert tool_name2 == "tool_a"
+    ctx_key2, candidate_name2 = router2._decode_trace_id(trace_id)
+    assert candidate_name2 == "tool_a"
     
     # Verify with another router using a different key fails
     router3 = BayesianRouter(storage=storage, secret_key="different_secret_key")
@@ -435,7 +435,7 @@ def test_router_contextual_priors():
     with pytest.raises(ValueError, match="Each contextual prior must contain a 'priors' dictionary"):
         BayesianRouter(storage=storage, contextual_priors=[{"pattern": "math"}])
 
-    with pytest.raises(ValueError, match="Prior parameters for tool .* must be a tuple/list"):
+    with pytest.raises(ValueError, match="Prior parameters for candidate .* must be a tuple/list"):
         BayesianRouter(storage=storage, contextual_priors=[{
             "pattern": "math",
             "priors": {"calculator": (10,)}
@@ -522,7 +522,7 @@ def test_router_contextual_priors():
     
     # Verify parameter seeding in storage
     key = router_clean._resolve_context_key("solve a math sum")
-    alpha_stored, beta_stored = storage_clean.get_tool_params(key, "calculator")
+    alpha_stored, beta_stored = storage_clean.get_candidate_params(key, "calculator")
     assert alpha_stored == 99.0
     assert beta_stored == 1.0
 

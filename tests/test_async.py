@@ -26,13 +26,13 @@ async def test_async_in_memory_storage():
     storage = AsyncInMemoryStorage()
 
     # Defaults
-    alpha, beta = await storage.get_tool_params("ctx_test", "tool_a")
+    alpha, beta = await storage.get_candidate_params("ctx_test", "tool_a")
     assert alpha == 1.0
     assert beta == 1.0
 
     # Updates
-    await storage.update_tool_params("ctx_test", "tool_a", 5.5, 4.2)
-    alpha, beta = await storage.get_tool_params("ctx_test", "tool_a")
+    await storage.update_candidate_params("ctx_test", "tool_a", 5.5, 4.2)
+    alpha, beta = await storage.get_candidate_params("ctx_test", "tool_a")
     assert alpha == 5.5
     assert beta == 4.2
 
@@ -62,13 +62,13 @@ async def test_async_sqlite_storage():
         storage = AsyncSQLiteStorage(db_path)
 
         # Defaults
-        a, b = await storage.get_tool_params("ctx_1", "tool_1")
+        a, b = await storage.get_candidate_params("ctx_1", "tool_1")
         assert a == 1.0
         assert b == 1.0
 
         # Updates
-        await storage.update_tool_params("ctx_1", "tool_1", 10.0, 2.0)
-        a, b = await storage.get_tool_params("ctx_1", "tool_1")
+        await storage.update_candidate_params("ctx_1", "tool_1", 10.0, 2.0)
+        a, b = await storage.get_candidate_params("ctx_1", "tool_1")
         assert a == 10.0
         assert b == 2.0
 
@@ -120,12 +120,12 @@ async def test_async_redis_storage():
     storage = AsyncRedisStorage(mock_client, prefix="bayes_brain:")
 
     # Get params
-    a, b = await storage.get_tool_params("ctx_1", "tool_1")
+    a, b = await storage.get_candidate_params("ctx_1", "tool_1")
     assert a == 10.0
     assert b == 5.0
 
     # Update params
-    await storage.update_tool_params("ctx_1", "tool_1", 12.0, 6.0)
+    await storage.update_candidate_params("ctx_1", "tool_1", 12.0, 6.0)
     mock_client.hset.assert_called_with(
         "bayes_brain:ctx_1",
         mapping={"tool_1:alpha": "12.0", "tool_1:beta": "6.0"}
@@ -195,13 +195,13 @@ async def test_async_router_exact_match():
     storage = AsyncInMemoryStorage()
     router = AsyncBayesianRouter(storage=storage, decay_factor=0.95)
 
-    tool = await router.aroute("web_search_query", ["search_api", "fallback_api"])
-    assert tool in ["search_api", "fallback_api"]
+    candidate_name = await router.aroute("web_search_query", ["search_api", "fallback_api"])
+    assert candidate_name in ["search_api", "fallback_api"]
 
     # feedback
     await router.afeedback("web_search_query", "search_api", success=True)
     key = await router._resolve_context_key("web_search_query")
-    a_success, b_success = await storage.get_tool_params(key, "search_api")
+    a_success, b_success = await storage.get_candidate_params(key, "search_api")
     assert a_success == pytest.approx(1.95)
     assert b_success == pytest.approx(1.0)
 
@@ -236,13 +236,13 @@ async def test_async_router_trace_feedback():
     storage = AsyncInMemoryStorage()
     router = AsyncBayesianRouter(storage=storage)
 
-    chosen_tool, trace_id = await router.aroute_with_trace("context_a", ["tool_x"])
-    assert chosen_tool == "tool_x"
+    chosen_candidate, trace_id = await router.aroute_with_trace("context_a", ["tool_x"])
+    assert chosen_candidate == "tool_x"
 
     await router.afeedback_by_trace(trace_id, success=True)
     
     key = await router._resolve_context_key("context_a")
-    alpha, beta = await storage.get_tool_params(key, "tool_x")
+    alpha, beta = await storage.get_candidate_params(key, "tool_x")
     assert alpha == 2.0
     assert beta == 1.0
 
@@ -261,11 +261,11 @@ async def test_async_router_priors():
 async def test_async_router_fallbacks(monkeypatch):
     storage = AsyncInMemoryStorage()
     
-    async def mock_get_tool_params(context_key, tool_name):
+    async def mock_get_candidate_params(context_key, candidate_name):
         raise RuntimeError("DB failure")
-    monkeypatch.setattr(storage, "get_tool_params", mock_get_tool_params)
+    monkeypatch.setattr(storage, "get_candidate_params", mock_get_candidate_params)
 
-    router = AsyncBayesianRouter(storage=storage, fallback_tool="fallback")
+    router = AsyncBayesianRouter(storage=storage, fallback_candidate="fallback")
     chosen = await router.aroute("query", ["tool_a", "fallback"])
     assert chosen == "fallback"
 
@@ -327,13 +327,13 @@ async def test_async_router_signed_trace_ids():
     assert "." in trace_id
     
     # Decode and verify it succeeds
-    ctx_key, tool_name = router._decode_trace_id(trace_id)
-    assert tool_name == "tool_a"
+    ctx_key, candidate_name = router._decode_trace_id(trace_id)
+    assert candidate_name == "tool_a"
     
     # Verify with another router using the same key succeeds
     router2 = AsyncBayesianRouter(storage=storage, secret_key="my_super_secret_key")
-    ctx_key2, tool_name2 = router2._decode_trace_id(trace_id)
-    assert tool_name2 == "tool_a"
+    ctx_key2, candidate_name2 = router2._decode_trace_id(trace_id)
+    assert candidate_name2 == "tool_a"
     
     # Verify with another router using a different key fails
     router3 = AsyncBayesianRouter(storage=storage, secret_key="different_secret_key")
@@ -424,7 +424,7 @@ async def test_async_router_contextual_priors():
     
     # Verify parameter seeding in storage
     key = await router_clean._resolve_context_key("solve a math sum")
-    alpha_stored, beta_stored = await storage_clean.get_tool_params(key, "calculator")
+    alpha_stored, beta_stored = await storage_clean.get_candidate_params(key, "calculator")
     assert alpha_stored == 99.0
     assert beta_stored == 1.0
 
@@ -452,15 +452,15 @@ async def test_async_sqlite_storage_concurrency():
         async def run_concurrent_updates(task_id: int):
             for i in range(10):
                 context_key = f"ctx_{task_id}_{i}"
-                tool_name = f"tool_{i}"
+                candidate_name = f"tool_{i}"
                 # Mix of reads, writes, and decay/updates
-                await storage.update_tool_params(context_key, tool_name, float(task_id), 1.0)
-                a, b = await storage.get_tool_params(context_key, tool_name)
+                await storage.update_candidate_params(context_key, candidate_name, float(task_id), 1.0)
+                a, b = await storage.get_candidate_params(context_key, candidate_name)
                 assert a == float(task_id)
                 assert b == 1.0
                 
-                await storage.decay_and_update(context_key, tool_name, 0.9, 1.0)
-                await storage.log_selection(f"trace_{task_id}_{i}", context_key, tool_name)
+                await storage.decay_and_update(context_key, candidate_name, 0.9, 1.0)
+                await storage.log_selection(f"trace_{task_id}_{i}", context_key, candidate_name)
                 await storage.log_feedback(f"trace_{task_id}_{i}", 1.0)
 
         # Run 20 tasks concurrently (each doing 10 cycles, total 200 writes/decays/selections)

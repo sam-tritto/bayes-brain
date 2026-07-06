@@ -41,7 +41,7 @@ def test_hybrid_routing_and_convergence():
     embedder = SimpleMockEmbedder()
     storage = InMemoryStorage()
     
-    tool_embeddings = {
+    candidate_embeddings = {
         "tool_math": [1.0, 0.0],
         "tool_other": [0.0, 1.0]
     }
@@ -52,24 +52,24 @@ def test_hybrid_routing_and_convergence():
         mode="linucb",
         exploration_weight=0.5,
         hybrid=True,
-        tool_embeddings=tool_embeddings,
+        candidate_embeddings=candidate_embeddings,
         diagonal_covariance=False
     )
 
-    candidate_tools = ["tool_math", "tool_other"]
+    candidates = ["tool_math", "tool_other"]
 
     # Initially, route multiple times and give feedback
     for _ in range(15):
-        tool, trace_id = router.route_with_trace("solve math equation", candidate_tools)
-        reward = 1.0 if tool == "tool_math" else 0.0
+        candidate_name, trace_id = router.route_with_trace("solve math equation", candidates)
+        reward = 1.0 if candidate_name== "tool_math" else 0.0
         router.feedback_by_trace(trace_id, reward=reward)
 
     # With training, tool_math should be chosen consistently
-    final_choices = [router.route("solve math equation", candidate_tools) for _ in range(10)]
+    final_choices = [router.route("solve math equation", candidates) for _ in range(10)]
     assert all(c == "tool_math" for c in final_choices)
 
     # Retrieve beliefs to check
-    mean_val, uncertainty_val = router.get_tool_beliefs("solve math equation", "tool_math")
+    mean_val, uncertainty_val = router.get_candidate_beliefs("solve math equation", "tool_math")
     assert mean_val > 0.8
     assert uncertainty_val < 0.5
 
@@ -83,7 +83,7 @@ def test_hybrid_generalization_cold_start():
     storage = InMemoryStorage()
     
     # 2D tool embeddings: dimension 0 is math-related, dimension 1 is other-related
-    tool_embeddings = {
+    candidate_embeddings = {
         "tool_math": [1.0, 0.0],
         "tool_other": [0.0, 1.0],
         "tool_math_v2": [0.9, 0.1],  # very similar to tool_math
@@ -96,15 +96,15 @@ def test_hybrid_generalization_cold_start():
         mode="linucb",
         exploration_weight=0.1,
         hybrid=True,
-        tool_embeddings=tool_embeddings,
+        candidate_embeddings=candidate_embeddings,
         diagonal_covariance=False
     )
 
     # 1. Train on original tools (tool_math vs tool_other)
     candidate_train = ["tool_math", "tool_other"]
     for _ in range(20):
-        tool, trace_id = router.route_with_trace("solve math equation", candidate_train)
-        reward = 1.0 if tool == "tool_math" else 0.0
+        candidate_name, trace_id = router.route_with_trace("solve math equation", candidate_train)
+        reward = 1.0 if candidate_name== "tool_math" else 0.0
         router.feedback_by_trace(trace_id, reward=reward)
 
     # 2. Route between two NEW tools (tool_math_v2 vs tool_other_v2) without any training on them
@@ -120,7 +120,7 @@ def test_hybrid_metadata_string_embedding():
     embedder = SimpleMockEmbedder()
     storage = InMemoryStorage()
     
-    tool_metadata = {
+    candidate_metadata = {
         "tool_math": "solve calculus math",
         "tool_other": "send email notifications"
     }
@@ -130,25 +130,25 @@ def test_hybrid_metadata_string_embedding():
         embedder=embedder,
         mode="linucb",
         hybrid=True,
-        tool_metadata=tool_metadata
+        candidate_metadata=candidate_metadata
     )
 
     # Verify we can route and fetch beliefs successfully
-    tool, trace_id = router.route_with_trace("do calculus equations", ["tool_math", "tool_other"])
-    assert tool in ["tool_math", "tool_other"]
+    candidate_name, trace_id = router.route_with_trace("do calculus equations", ["tool_math", "tool_other"])
+    assert candidate_name in ["tool_math", "tool_other"]
     
     router.feedback_by_trace(trace_id, reward=1.0)
     
     # Check if embedding cache was populated
-    assert "tool_math" in router._tool_embedding_cache
-    assert "tool_other" in router._tool_embedding_cache
+    assert "tool_math" in router._candidate_embedding_cache
+    assert "tool_other" in router._candidate_embedding_cache
 
 
 def test_hybrid_batch_routing_and_feedback():
     embedder = SimpleMockEmbedder()
     storage = InMemoryStorage()
     
-    tool_embeddings = {
+    candidate_embeddings = {
         "tool_math": [1.0, 0.0],
         "tool_other": [0.0, 1.0]
     }
@@ -158,7 +158,7 @@ def test_hybrid_batch_routing_and_feedback():
         embedder=embedder,
         mode="linucb",
         hybrid=True,
-        tool_embeddings=tool_embeddings
+        candidate_embeddings=candidate_embeddings
     )
 
     # Batch route
@@ -181,7 +181,7 @@ async def test_async_hybrid_routing_and_feedback(tmp_path):
     storage = AsyncSQLiteStorage(db_path=str(db_file))
     embedder = SimpleMockEmbedder()
     
-    tool_embeddings = {
+    candidate_embeddings = {
         "tool_math": [1.0, 0.0],
         "tool_other": [0.0, 1.0]
     }
@@ -191,23 +191,23 @@ async def test_async_hybrid_routing_and_feedback(tmp_path):
         embedder=embedder,
         mode="linucb",
         hybrid=True,
-        tool_embeddings=tool_embeddings,
+        candidate_embeddings=candidate_embeddings,
         diagonal_covariance=True
     )
 
-    candidate_tools = ["tool_math", "tool_other"]
+    candidates = ["tool_math", "tool_other"]
 
     # Route and feedback asynchronous
-    tool, trace_id = await router.aroute_with_trace("do math algebra", candidate_tools)
+    candidate_name, trace_id = await router.aroute_with_trace("do math algebra", candidates)
     await router.afeedback_by_trace(trace_id, reward=1.0)
 
     # Retrieve async beliefs
-    mean_val, uncertainty_val = await router.aget_tool_beliefs("do math algebra", "tool_math")
+    mean_val, uncertainty_val = await router.aget_candidate_beliefs("do math algebra", "tool_math")
     assert mean_val > 0.5
 
     # Async batch route and feedback
     contexts = ["do algebra", "do trigonometry"]
-    routes = await router.aroute_batch_with_trace(contexts, candidate_tools)
+    routes = await router.aroute_batch_with_trace(contexts, candidates)
     assert len(routes) == 2
 
     feedbacks = [

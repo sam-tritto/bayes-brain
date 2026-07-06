@@ -31,7 +31,7 @@ logger = logging.getLogger(__name__)
 
 class BayesianRouter:
     """
-    Decoupled tool routing middleware implementing a Contextual Multi-Armed Bandit
+    Decoupled candidate routing middleware implementing a Contextual Multi-Armed Bandit
     via Thompson Sampling.
     """
 
@@ -44,7 +44,7 @@ class BayesianRouter:
         priors: Optional[Dict[str, Tuple[float, float]]] = None,
         contextual_priors: Optional[List[Dict[str, Any]]] = None,
         vector_store: Optional[VectorStoreProtocol] = None,
-        fallback_tool: Optional[str] = None,
+        fallback_candidate: Optional[str] = None,
         telemetry_hook: Optional[Callable[[str, Exception, Dict[str, Any]], None]] = None,
         mode: str = "clustering",
         exploration_weight: float = 1.0,
@@ -52,8 +52,8 @@ class BayesianRouter:
         diagonal_covariance: bool = False,
         secret_key: Optional[Union[str, bytes]] = None,
         hybrid: bool = False,
-        tool_embeddings: Optional[Dict[str, Union[Sequence[float], np.ndarray]]] = None,
-        tool_metadata: Optional[Dict[str, str]] = None,
+        candidate_embeddings: Optional[Dict[str, Union[Sequence[float], np.ndarray]]] = None,
+        candidate_metadata: Optional[Dict[str, str]] = None,
         storage_backend: Optional[str] = None,
         storage_path: Optional[str] = None,
         storage_kwargs: Optional[Dict[str, Any]] = None,
@@ -66,7 +66,7 @@ class BayesianRouter:
             embedder: Optional ContextEmbedder protocol to generate query embeddings.
             decay_factor: Exponential decay / discount factor (gamma) in (0, 1]. Defaults to 1.0.
             similarity_threshold: Cosine similarity threshold for mapping embeddings to contexts.
-            priors: Preseeded alpha/beta priors for tools to mitigate cold start (e.g. {"tool": (10, 2)}).
+            priors: Preseeded alpha/beta priors for candidates to mitigate cold start (e.g. {"candidate": (10, 2)}).
             contextual_priors: List of context-specific prior rules matching regex or embedding clusters.
             vector_store: Optional custom VectorStoreProtocol implementation.
             mode: routing mode ("clustering", "lints", "linucb").
@@ -75,8 +75,8 @@ class BayesianRouter:
             diagonal_covariance: whether to use diagonal covariance approximation.
             secret_key: Secret key used to sign and verify trace IDs via HMAC.
             hybrid: Whether to use shared-parameter (hybrid) contextual bandit.
-            tool_embeddings: Dict mapping tool name to its embedding vector.
-            tool_metadata: Dict mapping tool name to its metadata string.
+            candidate_embeddings: Dict mapping candidate name to its embedding vector.
+            candidate_metadata: Dict mapping candidate name to its metadata string.
             storage_backend: Optional name of storage backend ("sqlite", "redis", "memory").
             storage_path: Optional file path or URL for the storage backend.
             storage_kwargs: Optional additional arguments for the storage backend.
@@ -103,7 +103,7 @@ class BayesianRouter:
 
         self.storage = storage or InMemoryStorage()
         self.embedder = embedder
-        self.fallback_tool = fallback_tool
+        self.fallback_candidate = fallback_candidate
         self.telemetry_hook = telemetry_hook
         
         self.mode = mode
@@ -113,9 +113,9 @@ class BayesianRouter:
         self.lambda_val = lambda_val
         self.diagonal_covariance = diagonal_covariance
         self.hybrid = hybrid
-        self.tool_embeddings = tool_embeddings
-        self.tool_metadata = tool_metadata
-        self._tool_embedding_cache: Dict[str, np.ndarray] = {}
+        self.candidate_embeddings = candidate_embeddings
+        self.candidate_metadata = candidate_metadata
+        self._candidate_embedding_cache: Dict[str, np.ndarray] = {}
 
         if self.hybrid and self.mode not in ("lints", "linucb"):
             raise ValueError("Hybrid mode is only supported with linear bandit modes ('lints', 'linucb').")
@@ -159,7 +159,7 @@ class BayesianRouter:
                 priors_map = {}
                 for t_name, params in item["priors"].items():
                     if not isinstance(params, (list, tuple)) or len(params) != 2:
-                        raise ValueError(f"Prior parameters for tool '{t_name}' must be a tuple/list of (alpha, beta).")
+                        raise ValueError(f"Prior parameters for candidate '{t_name}' must be a tuple/list of (alpha, beta).")
                     priors_map[t_name] = (float(params[0]), float(params[1]))
                 parsed_item["priors"] = priors_map
 
@@ -228,30 +228,30 @@ class BayesianRouter:
         sha256_hash = hashlib.sha256(normalized.encode("utf-8")).hexdigest()
         return f"hash_{sha256_hash}"
 
-    def _get_tool_embedding(self, tool_name: str) -> np.ndarray:
-        if tool_name in self._tool_embedding_cache:
-            return self._tool_embedding_cache[tool_name]
+    def _get_candidate_embedding(self, candidate_name: str) -> np.ndarray:
+        if candidate_name in self._candidate_embedding_cache:
+            return self._candidate_embedding_cache[candidate_name]
 
         # 1. Direct embedding
-        if self.tool_embeddings and tool_name in self.tool_embeddings:
-            emb = np.array(self.tool_embeddings[tool_name], dtype=np.float32)
-            self._tool_embedding_cache[tool_name] = emb
+        if self.candidate_embeddings and candidate_name in self.candidate_embeddings:
+            emb = np.array(self.candidate_embeddings[candidate_name], dtype=np.float32)
+            self._candidate_embedding_cache[candidate_name] = emb
             return emb
 
         # 2. Metadata string
-        if self.tool_metadata and tool_name in self.tool_metadata:
+        if self.candidate_metadata and candidate_name in self.candidate_metadata:
             if self.embedder is None:
-                raise ValueError("ContextEmbedder is required to embed tool metadata.")
-            emb = np.array(self.embedder.embed_query(self.tool_metadata[tool_name]), dtype=np.float32)
-            self._tool_embedding_cache[tool_name] = emb
+                raise ValueError("ContextEmbedder is required to embed candidate metadata.")
+            emb = np.array(self.embedder.embed_query(self.candidate_metadata[candidate_name]), dtype=np.float32)
+            self._candidate_embedding_cache[candidate_name] = emb
             return emb
 
         # 3. Fallback
         if self.embedder is None:
             emb = np.array([0.0], dtype=np.float32)
         else:
-            emb = np.array(self.embedder.embed_query(tool_name), dtype=np.float32)
-        self._tool_embedding_cache[tool_name] = emb
+            emb = np.array(self.embedder.embed_query(candidate_name), dtype=np.float32)
+        self._candidate_embedding_cache[candidate_name] = emb
         return emb
 
     def _resolve_context_key(self, context_text: str) -> str:
@@ -288,7 +288,7 @@ class BayesianRouter:
             self.storage.save_vector(new_key, vector)
         return new_key
 
-    def get_prior(self, context_text: str, tool_name: str) -> Tuple[float, float]:
+    def get_prior(self, context_text: str, candidate_name: str) -> Tuple[float, float]:
         """
         Retrieve context-specific prior parameters if a matching contextual prior rule exists.
         Falls back to global priors or default (1.0, 1.0).
@@ -300,8 +300,8 @@ class BayesianRouter:
                 pattern = prior_item.get("pattern")
                 if pattern is not None:
                     if pattern.search(context_text):
-                        if tool_name in prior_item["priors"]:
-                            return prior_item["priors"][tool_name]
+                        if candidate_name in prior_item["priors"]:
+                            return prior_item["priors"][candidate_name]
                         continue
 
                 # 2. Embedding similarity matching
@@ -338,17 +338,17 @@ class BayesianRouter:
                                 similarity = float(np.dot(query_vector, ref_vector) / (q_norm * r_norm))
                                 threshold = prior_item.get("similarity_threshold", self.similarity_threshold)
                                 if similarity >= threshold:
-                                    if tool_name in prior_item["priors"]:
-                                        return prior_item["priors"][tool_name]
+                                    if candidate_name in prior_item["priors"]:
+                                        return prior_item["priors"][candidate_name]
                                     continue
         # Fall back to global priors
-        return self.priors.get(tool_name, (1.0, 1.0))
+        return self.priors.get(candidate_name, (1.0, 1.0))
 
-    def _generate_trace_id(self, context_key: str, tool_name: str) -> str:
-        """Encodes context key and tool name into a stateless token and signs it using HMAC."""
+    def _generate_trace_id(self, context_key: str, candidate_name: str) -> str:
+        """Encodes context key and candidate name into a stateless token and signs it using HMAC."""
         payload = {
             "ctx": context_key,
-            "tool": tool_name,
+            "candidate": candidate_name,
             "nonce": uuid.uuid4().hex,
         }
         json_bytes = json.dumps(payload).encode("utf-8")
@@ -361,7 +361,7 @@ class BayesianRouter:
         return f"{payload_b64}.{signature_b64}"
 
     def _decode_trace_id(self, trace_id: str) -> Tuple[str, str]:
-        """Decodes and verifies context key and tool name from a signed trace ID token."""
+        """Decodes and verifies context key and candidate name from a signed trace ID token."""
         try:
             if "." not in trace_id:
                 raise ValueError("Missing signature in trace ID")
@@ -377,35 +377,32 @@ class BayesianRouter:
                 
             json_bytes = base64.urlsafe_b64decode(payload_b64.encode("utf-8"))
             payload = json.loads(json_bytes.decode("utf-8"))
-            return payload["ctx"], payload["tool"]
+            return payload["ctx"], payload["candidate"]
         except Exception as e:
             raise ValueError(f"Invalid or corrupted trace ID: {trace_id}") from e
 
     def route(
         self,
         context_text: Optional[str] = None,
-        candidate_tools: Optional[List[str]] = None,
-        context_key: Optional[str] = None,
         candidates: Optional[List[str]] = None,
+        context_key: Optional[str] = None,
     ) -> str:
         """
-        Implements Thompson Sampling across a filtered list of valid tools/skills.
+        Implements Thompson Sampling across a filtered list of valid candidates/skills.
         Returns the name of the selected candidate.
         """
-        chosen_tool, _ = self.route_with_trace(
+        chosen_candidate, _ = self.route_with_trace(
             context_text=context_text,
-            candidate_tools=candidate_tools,
-            context_key=context_key,
             candidates=candidates,
+            context_key=context_key,
         )
-        return chosen_tool
+        return chosen_candidate
 
     def route_with_trace(
         self,
         context_text: Optional[str] = None,
-        candidate_tools: Optional[List[str]] = None,
-        context_key: Optional[str] = None,
         candidates: Optional[List[str]] = None,
+        context_key: Optional[str] = None,
     ) -> Tuple[str, str]:
         """
         Implements Thompson Sampling and returns a tuple of (chosen_candidate_name, trace_id).
@@ -415,45 +412,43 @@ class BayesianRouter:
         if resolved_context is None:
             raise ValueError("Must provide either 'context_text' or 'context_key'")
 
-        resolved_candidates = candidate_tools if candidate_tools is not None else candidates
-        if resolved_candidates is None:
-            raise ValueError("Must provide either 'candidate_tools' or 'candidates'")
+        if candidates is None:
+            raise ValueError("Must provide 'candidates'")
 
         context_text = resolved_context
-        candidate_tools = resolved_candidates
 
-        if not candidate_tools:
-            raise ValueError("Candidate tools list cannot be empty")
+        if not candidates:
+            raise ValueError("Candidates list cannot be empty")
 
         try:
             if self.mode == "clustering":
                 context_key = self._resolve_context_key(context_text)
-                best_tool = None
+                best_candidate = None
                 highest_sample = -1.0
 
-                for tool_name in candidate_tools:
-                    alpha, beta = self.storage.get_tool_params(context_key, tool_name)
+                for candidate_name in candidates:
+                    alpha, beta = self.storage.get_candidate_params(context_key, candidate_name)
 
                     # Check for seeded priors on cold start
                     if alpha == 1.0 and beta == 1.0:
-                        prior_alpha, prior_beta = self.get_prior(context_text, tool_name)
+                        prior_alpha, prior_beta = self.get_prior(context_text, candidate_name)
                         if prior_alpha != 1.0 or prior_beta != 1.0:
                             alpha, beta = prior_alpha, prior_beta
-                            self.storage.update_tool_params(context_key, tool_name, alpha, beta)
+                            self.storage.update_candidate_params(context_key, candidate_name, alpha, beta)
 
                     # Sample belief matching beta-binomial posterior
                     sampled_score = np.random.beta(alpha, beta)
 
                     if sampled_score > highest_sample:
                         highest_sample = sampled_score
-                        best_tool = tool_name
+                        best_candidate = candidate_name
 
-                if best_tool is None:
-                    best_tool = candidate_tools[0]
+                if best_candidate is None:
+                    best_candidate = candidates[0]
 
-                trace_id = self._generate_trace_id(context_key, best_tool)
-                self.storage.log_selection(trace_id, context_key, best_tool)
-                return best_tool, trace_id
+                trace_id = self._generate_trace_id(context_key, best_candidate)
+                self.storage.log_selection(trace_id, context_key, best_candidate)
+                return best_candidate, trace_id
 
             elif self.hybrid:
                 if self.embedder is None:
@@ -461,10 +456,10 @@ class BayesianRouter:
                 x_c = np.array(self.embedder.embed_query(context_text), dtype=np.float32)
                 context_key = self._resolve_context_key(context_text)
 
-                if not candidate_tools:
-                    raise ValueError("Candidate tools list cannot be empty")
+                if not candidates:
+                    raise ValueError("Candidate candidates list cannot be empty")
                 
-                t_first = self._get_tool_embedding(candidate_tools[0])
+                t_first = self._get_candidate_embedding(candidates[0])
                 d_aug = len(x_c) + len(t_first) + 1
                 
                 precision, reward_vector = self.storage.get_linear_params("__shared_hybrid__")
@@ -494,11 +489,11 @@ class BayesianRouter:
                                 theta_hat, (self.exploration_weight ** 2) * cov
                             )
 
-                best_tool = None
+                best_candidate = None
                 highest_score = -float("inf")
 
-                for tool_name in candidate_tools:
-                    t_a = self._get_tool_embedding(tool_name)
+                for candidate_name in candidates:
+                    t_a = self._get_candidate_embedding(candidate_name)
                     x_augmented = np.concatenate([x_c, t_a, [1.0]])
 
                     if self.mode == "lints":
@@ -514,14 +509,14 @@ class BayesianRouter:
 
                     if score > highest_score:
                         highest_score = score
-                        best_tool = tool_name
+                        best_candidate = candidate_name
 
-                if best_tool is None:
-                    best_tool = candidate_tools[0]
+                if best_candidate is None:
+                    best_candidate = candidates[0]
 
-                trace_id = self._generate_trace_id(context_key, best_tool)
-                self.storage.log_selection(trace_id, context_key, best_tool)
-                return best_tool, trace_id
+                trace_id = self._generate_trace_id(context_key, best_candidate)
+                self.storage.log_selection(trace_id, context_key, best_candidate)
+                return best_candidate, trace_id
 
             else:
                 if self.embedder is None:
@@ -532,14 +527,14 @@ class BayesianRouter:
                 x_augmented = np.append(x, 1.0)
                 d_aug = d + 1
                 
-                best_tool = None
+                best_candidate = None
                 highest_score = -float("inf")
                 
-                for tool_name in candidate_tools:
-                    prior_alpha, prior_beta = self.get_prior(context_text, tool_name)
+                for candidate_name in candidates:
+                    prior_alpha, prior_beta = self.get_prior(context_text, candidate_name)
                     prior_p = prior_alpha / (prior_alpha + prior_beta)
                     
-                    precision, reward_vector = self.storage.get_linear_params(tool_name)
+                    precision, reward_vector = self.storage.get_linear_params(candidate_name)
                     if precision is None or reward_vector is None:
                         precision = self.lambda_val * np.ones(d_aug, dtype=np.float32) if self.diagonal_covariance else self.lambda_val * np.eye(d_aug, dtype=np.float32)
                         reward_vector = np.zeros(d_aug, dtype=np.float32)
@@ -577,14 +572,14 @@ class BayesianRouter:
 
                     if score > highest_score:
                         highest_score = score
-                        best_tool = tool_name
+                        best_candidate = candidate_name
 
-                if best_tool is None:
-                    best_tool = candidate_tools[0]
+                if best_candidate is None:
+                    best_candidate = candidates[0]
 
-                trace_id = self._generate_trace_id(context_key, best_tool)
-                self.storage.log_selection(trace_id, context_key, best_tool)
-                return best_tool, trace_id
+                trace_id = self._generate_trace_id(context_key, best_candidate)
+                self.storage.log_selection(trace_id, context_key, best_candidate)
+                return best_candidate, trace_id
 
         except Exception as e:
             logger.exception(
@@ -597,16 +592,16 @@ class BayesianRouter:
                         e,
                         {
                             "context_text": context_text,
-                            "candidate_tools": candidate_tools,
+                            "candidates": candidates,
                         },
                     )
                 except Exception as hook_err:
                     logger.error(f"Telemetry hook failed: {hook_err}")
 
-            if self.fallback_tool and self.fallback_tool in candidate_tools:
-                fallback_choice = self.fallback_tool
+            if self.fallback_candidate and self.fallback_candidate in candidates:
+                fallback_choice = self.fallback_candidate
             else:
-                fallback_choice = candidate_tools[0]
+                fallback_choice = candidates[0]
 
             fallback_trace_id = self._generate_trace_id("fallback_ctx", fallback_choice)
             self.storage.log_selection(fallback_trace_id, "fallback_ctx", fallback_choice)
@@ -615,32 +610,23 @@ class BayesianRouter:
     def feedback(
         self,
         context_text: Optional[str] = None,
-        tool_name: Optional[str] = None,
+        candidate_name: Optional[str] = None,
         success: Optional[bool] = None,
         reward: Optional[float] = None,
         context_key: Optional[str] = None,
-        candidate_name: Optional[str] = None,
-        skill_name: Optional[str] = None,
-        candidate: Optional[str] = None,
     ) -> Tuple[float, float]:
         """
-        Directly submit tool execution feedback using the raw context string.
+        Directly submit candidate execution feedback using the raw context string.
         Either success (boolean) or reward (float between 0.0 and 1.0) must be provided.
         """
         resolved_context = context_text if context_text is not None else context_key
         if resolved_context is None:
             raise ValueError("Must provide either 'context_text' or 'context_key'")
 
-        resolved_tool = None
-        for val in (tool_name, candidate_name, skill_name, candidate):
-            if val is not None:
-                resolved_tool = val
-                break
-        if resolved_tool is None:
-            raise ValueError("Must provide a tool/candidate/skill name.")
+        if candidate_name is None:
+            raise ValueError("Must provide a candidate_name.")
 
         context_text = resolved_context
-        tool_name = resolved_tool
 
         if success is None and reward is None:
             raise ValueError("Either 'success' or 'reward' must be provided.")
@@ -664,20 +650,20 @@ class BayesianRouter:
             if self.mode == "clustering":
                 context_key = self._resolve_context_key(context_text)
                 return self.storage.decay_and_update(
-                    context_key, tool_name, self.decay_factor, reward_val
+                    context_key, candidate_name, self.decay_factor, reward_val
                 )
             elif self.hybrid:
                 if self.embedder is None:
                     raise ValueError("embedder is required for linear bandit mode")
                 x_c = np.array(self.embedder.embed_query(context_text), dtype=np.float32)
-                t_a = self._get_tool_embedding(tool_name)
+                t_a = self._get_candidate_embedding(candidate_name)
                 x_augmented = np.concatenate([x_c, t_a, [1.0]])
 
-                prior_alpha, prior_beta = self.get_prior(context_text, tool_name)
+                prior_alpha, prior_beta = self.get_prior(context_text, candidate_name)
                 prior_p = prior_alpha / (prior_alpha + prior_beta)
 
                 precision, reward_vector = self.storage.decay_and_update_linear(
-                    tool_name="__shared_hybrid__",
+                    candidate_name="__shared_hybrid__",
                     decay_factor=self.decay_factor,
                     reward=reward_val,
                     x_augmented=x_augmented,
@@ -705,14 +691,14 @@ class BayesianRouter:
                 context_key = self._resolve_context_key(context_text)
                 x_augmented = np.append(x, 1.0)
                 
-                if tool_name in self.priors:
-                    alpha, beta = self.priors[tool_name]
+                if candidate_name in self.priors:
+                    alpha, beta = self.priors[candidate_name]
                     prior_p = alpha / (alpha + beta)
                 else:
                     prior_p = 0.5
                 
                 precision, reward_vector = self.storage.decay_and_update_linear(
-                    tool_name=tool_name,
+                    candidate_name=candidate_name,
                     decay_factor=self.decay_factor,
                     reward=reward_val,
                     x_augmented=x_augmented,
@@ -742,7 +728,7 @@ class BayesianRouter:
                         e,
                         {
                             "context_text": context_text,
-                            "tool_name": tool_name,
+                            "candidate_name": candidate_name,
                             "success": success,
                             "reward": reward,
                         },
@@ -758,7 +744,7 @@ class BayesianRouter:
         reward: Optional[float] = None,
     ) -> Tuple[float, float]:
         """
-        Directly submit tool execution feedback using a generated trace ID.
+        Directly submit candidate execution feedback using a generated trace ID.
         Ideal for asynchronous and decoupled systems.
         Either success (boolean) or reward (float between 0.0 and 1.0) must be provided.
         """
@@ -781,15 +767,15 @@ class BayesianRouter:
             reward_val = 1.0 if success else 0.0
 
         try:
-            context_key, tool_name = self._decode_trace_id(trace_id)
+            context_key, candidate_name = self._decode_trace_id(trace_id)
             self.storage.log_feedback(trace_id, reward_val)
             if self.mode == "clustering":
                 return self.storage.decay_and_update(
-                    context_key, tool_name, self.decay_factor, reward_val
+                    context_key, candidate_name, self.decay_factor, reward_val
                 )
             elif self.hybrid:
                 x_seq = self._context_store.get_context_vector(context_key)
-                t_a = self._get_tool_embedding(tool_name)
+                t_a = self._get_candidate_embedding(candidate_name)
                 if x_seq is None:
                     logger.warning(
                         f"Context vector not found for key {context_key}. Using zero vector as fallback."
@@ -804,14 +790,14 @@ class BayesianRouter:
                 
                 x_augmented = np.concatenate([x, t_a, [1.0]])
                 
-                if tool_name in self.priors:
-                    alpha, beta = self.priors[tool_name]
+                if candidate_name in self.priors:
+                    alpha, beta = self.priors[candidate_name]
                     prior_p = alpha / (alpha + beta)
                 else:
                     prior_p = 0.5
                 
                 precision, reward_vector = self.storage.decay_and_update_linear(
-                    tool_name="__shared_hybrid__",
+                    candidate_name="__shared_hybrid__",
                     decay_factor=self.decay_factor,
                     reward=reward_val,
                     x_augmented=x_augmented,
@@ -839,7 +825,7 @@ class BayesianRouter:
                         f"Context vector not found for key {context_key}. Using zero vector as fallback."
                     )
                     d = 384
-                    precision, _ = self.storage.get_linear_params(tool_name)
+                    precision, _ = self.storage.get_linear_params(candidate_name)
                     if precision is not None:
                         d = len(precision) - 1
                     x = np.zeros(d, dtype=np.float32)
@@ -848,14 +834,14 @@ class BayesianRouter:
                 
                 x_augmented = np.append(x, 1.0)
                 
-                if tool_name in self.priors:
-                    alpha, beta = self.priors[tool_name]
+                if candidate_name in self.priors:
+                    alpha, beta = self.priors[candidate_name]
                     prior_p = alpha / (alpha + beta)
                 else:
                     prior_p = 0.5
                 
                 precision, reward_vector = self.storage.decay_and_update_linear(
-                    tool_name=tool_name,
+                    candidate_name=candidate_name,
                     decay_factor=self.decay_factor,
                     reward=reward_val,
                     x_augmented=x_augmented,
@@ -893,49 +879,40 @@ class BayesianRouter:
                     logger.error(f"Telemetry hook failed: {hook_err}")
             return 1.0, 1.0
 
-    def get_tool_beliefs(
+    def get_candidate_beliefs(
         self,
         context_text: Optional[str] = None,
-        tool_name: Optional[str] = None,
-        context_key: Optional[str] = None,
         candidate_name: Optional[str] = None,
-        skill_name: Optional[str] = None,
-        candidate: Optional[str] = None,
+        context_key: Optional[str] = None,
     ) -> Tuple[float, float]:
         """
-        Retrieve current posterior alpha and beta beliefs (or expected reward and uncertainty) for a given context and tool.
+        Retrieve current posterior alpha and beta beliefs (or expected reward and uncertainty) for a given context and candidate.
         """
         resolved_context = context_text if context_text is not None else context_key
         if resolved_context is None:
             raise ValueError("Must provide either 'context_text' or 'context_key'")
 
-        resolved_tool = None
-        for val in (tool_name, candidate_name, skill_name, candidate):
-            if val is not None:
-                resolved_tool = val
-                break
-        if resolved_tool is None:
-            raise ValueError("Must provide a tool/candidate/skill name.")
+        if candidate_name is None:
+            raise ValueError("Must provide a candidate_name.")
 
         context_text = resolved_context
-        tool_name = resolved_tool
 
         try:
             context_key = self._resolve_context_key(context_text)
             if self.mode == "clustering":
-                alpha, beta = self.storage.get_tool_params(context_key, tool_name)
+                alpha, beta = self.storage.get_candidate_params(context_key, candidate_name)
                 if alpha == 1.0 and beta == 1.0:
-                    alpha, beta = self.get_prior(context_text, tool_name)
+                    alpha, beta = self.get_prior(context_text, candidate_name)
                 return alpha, beta
             elif self.hybrid:
                 if self.embedder is None:
                     raise ValueError("embedder is required for linear bandit mode")
                 x_c = np.array(self.embedder.embed_query(context_text), dtype=np.float32)
-                t_a = self._get_tool_embedding(tool_name)
+                t_a = self._get_candidate_embedding(candidate_name)
                 x_augmented = np.concatenate([x_c, t_a, [1.0]])
                 d_aug = len(x_augmented)
 
-                prior_alpha, prior_beta = self.get_prior(context_text, tool_name)
+                prior_alpha, prior_beta = self.get_prior(context_text, candidate_name)
                 prior_p = prior_alpha / (prior_alpha + prior_beta)
 
                 precision, reward_vector = self.storage.get_linear_params("__shared_hybrid__")
@@ -963,10 +940,10 @@ class BayesianRouter:
                 x_augmented = np.append(x, 1.0)
                 d_aug = len(x_augmented)
                 
-                prior_alpha, prior_beta = self.get_prior(context_text, tool_name)
+                prior_alpha, prior_beta = self.get_prior(context_text, candidate_name)
                 prior_p = prior_alpha / (prior_alpha + prior_beta)
                 
-                precision, reward_vector = self.storage.get_linear_params(tool_name)
+                precision, reward_vector = self.storage.get_linear_params(candidate_name)
                 if precision is None or reward_vector is None:
                     precision = self.lambda_val * np.ones(d_aug, dtype=np.float32) if self.diagonal_covariance else self.lambda_val * np.eye(d_aug, dtype=np.float32)
                     reward_vector = np.zeros(d_aug, dtype=np.float32)
@@ -984,15 +961,15 @@ class BayesianRouter:
                 
                 return expected_reward, uncertainty
         except Exception as e:
-            logger.exception("BayesianRouter get_tool_beliefs failed.")
+            logger.exception("BayesianRouter get_candidate_beliefs failed.")
             if self.telemetry_hook:
                 try:
                     self.telemetry_hook(
-                        "get_tool_beliefs_failure",
+                        "get_candidate_beliefs_failure",
                         e,
                         {
                             "context_text": context_text,
-                            "tool_name": tool_name,
+                            "candidate_name": candidate_name,
                         },
                     )
                 except Exception as hook_err:
@@ -1044,28 +1021,23 @@ class BayesianRouter:
     def route_batch(
         self,
         contexts: List[str],
-        candidate_tools: Optional[List[str]] = None,
         candidates: Optional[List[str]] = None,
     ) -> List[str]:
-        resolved_candidates = candidate_tools if candidate_tools is not None else candidates
-        if resolved_candidates is None:
-            raise ValueError("Must provide either 'candidate_tools' or 'candidates'")
-        results = self.route_batch_with_trace(contexts, candidate_tools=resolved_candidates)
-        return [tool for tool, _ in results]
+        if candidates is None:
+            raise ValueError("Must provide 'candidates'")
+        results = self.route_batch_with_trace(contexts, candidates=candidates)
+        return [candidate for candidate, _ in results]
 
     def route_batch_with_trace(
         self,
         contexts: List[str],
-        candidate_tools: Optional[List[str]] = None,
         candidates: Optional[List[str]] = None,
     ) -> List[Tuple[str, str]]:
-        resolved_candidates = candidate_tools if candidate_tools is not None else candidates
-        if resolved_candidates is None:
-            raise ValueError("Must provide either 'candidate_tools' or 'candidates'")
-        candidate_tools = resolved_candidates
+        if candidates is None:
+            raise ValueError("Must provide 'candidates'")
 
-        if not candidate_tools:
-            raise ValueError("Candidate tools list cannot be empty")
+        if not candidates:
+            raise ValueError("Candidates list cannot be empty")
         if not contexts:
             return []
 
@@ -1073,44 +1045,44 @@ class BayesianRouter:
             if self.mode == "clustering":
                 context_keys = self._resolve_context_keys(contexts)
                 
-                param_keys = [(ctx_key, tool_name) for ctx_key in context_keys for tool_name in candidate_tools]
-                param_dict = self.storage.get_tool_params_batch(param_keys)
+                param_keys = [(ctx_key, candidate_name) for ctx_key in context_keys for candidate_name in candidates]
+                param_dict = self.storage.get_candidate_params_batch(param_keys)
                 
                 priors_to_update = {}
                 results = []
                 for idx, context_key in enumerate(context_keys):
                     context_text = contexts[idx]
-                    best_tool = None
+                    best_candidate = None
                     highest_sample = -1.0
 
-                    for tool_name in candidate_tools:
-                        alpha, beta = param_dict.get((context_key, tool_name), (1.0, 1.0))
+                    for candidate_name in candidates:
+                        alpha, beta = param_dict.get((context_key, candidate_name), (1.0, 1.0))
 
                         if alpha == 1.0 and beta == 1.0:
-                            prior_alpha, prior_beta = self.get_prior(context_text, tool_name)
+                            prior_alpha, prior_beta = self.get_prior(context_text, candidate_name)
                             if prior_alpha != 1.0 or prior_beta != 1.0:
                                 alpha, beta = prior_alpha, prior_beta
-                                priors_to_update[(context_key, tool_name)] = (alpha, beta)
+                                priors_to_update[(context_key, candidate_name)] = (alpha, beta)
 
                         sampled_score = np.random.beta(alpha, beta)
 
                         if sampled_score > highest_sample:
                             highest_sample = sampled_score
-                            best_tool = tool_name
+                            best_candidate = candidate_name
 
-                    if best_tool is None:
-                        best_tool = candidate_tools[0]
+                    if best_candidate is None:
+                        best_candidate = candidates[0]
 
-                    trace_id = self._generate_trace_id(context_key, best_tool)
-                    self.storage.log_selection(trace_id, context_key, best_tool)
-                    results.append((best_tool, trace_id))
+                    trace_id = self._generate_trace_id(context_key, best_candidate)
+                    self.storage.log_selection(trace_id, context_key, best_candidate)
+                    results.append((best_candidate, trace_id))
 
                 if priors_to_update:
-                    if hasattr(self.storage, "update_tool_params_batch"):
-                        self.storage.update_tool_params_batch(priors_to_update)
+                    if hasattr(self.storage, "update_candidate_params_batch"):
+                        self.storage.update_candidate_params_batch(priors_to_update)
                     else:
-                        for (ctx_key, tool_name), (alpha, beta) in priors_to_update.items():
-                            self.storage.update_tool_params(ctx_key, tool_name, alpha, beta)
+                        for (ctx_key, candidate_name), (alpha, beta) in priors_to_update.items():
+                            self.storage.update_candidate_params(ctx_key, candidate_name, alpha, beta)
 
                 return results
 
@@ -1125,7 +1097,7 @@ class BayesianRouter:
 
                 context_keys = self._resolve_context_keys(contexts)
                 
-                t_first = self._get_tool_embedding(candidate_tools[0])
+                t_first = self._get_candidate_embedding(candidates[0])
                 d_aug = len(vectors[0]) + len(t_first) + 1
                 
                 precision, reward_vector = self.storage.get_linear_params("__shared_hybrid__")
@@ -1160,11 +1132,11 @@ class BayesianRouter:
                                     theta_hat, (self.exploration_weight ** 2) * cov
                                 )
 
-                    best_tool = None
+                    best_candidate = None
                     highest_score = -float("inf")
 
-                    for tool_name in candidate_tools:
-                        t_a = self._get_tool_embedding(tool_name)
+                    for candidate_name in candidates:
+                        t_a = self._get_candidate_embedding(candidate_name)
                         x_augmented = np.concatenate([x_c, t_a, [1.0]])
 
                         if self.mode == "lints":
@@ -1180,14 +1152,14 @@ class BayesianRouter:
 
                         if score > highest_score:
                             highest_score = score
-                            best_tool = tool_name
+                            best_candidate = candidate_name
 
-                    if best_tool is None:
-                        best_tool = candidate_tools[0]
+                    if best_candidate is None:
+                        best_candidate = candidates[0]
 
-                    trace_id = self._generate_trace_id(context_key, best_tool)
-                    self.storage.log_selection(trace_id, context_key, best_tool)
-                    results.append((best_tool, trace_id))
+                    trace_id = self._generate_trace_id(context_key, best_candidate)
+                    self.storage.log_selection(trace_id, context_key, best_candidate)
+                    results.append((best_candidate, trace_id))
 
                 return results
 
@@ -1202,10 +1174,10 @@ class BayesianRouter:
                 
                 tool_params = {}
                 if hasattr(self.storage, "get_linear_params_batch"):
-                    tool_params = self.storage.get_linear_params_batch(candidate_tools)
+                    tool_params = self.storage.get_linear_params_batch(candidates)
                 else:
-                    for tool_name in candidate_tools:
-                        tool_params[tool_name] = self.storage.get_linear_params(tool_name)
+                    for candidate_name in candidates:
+                        tool_params[candidate_name] = self.storage.get_linear_params(candidate_name)
 
                 context_keys = self._resolve_context_keys(contexts)
                 results = []
@@ -1217,14 +1189,14 @@ class BayesianRouter:
                     context_key = context_keys[idx]
                     context_text = contexts[idx]
                     
-                    best_tool = None
+                    best_candidate = None
                     highest_score = -float("inf")
                     
-                    for tool_name in candidate_tools:
-                        prior_alpha, prior_beta = self.get_prior(context_text, tool_name)
+                    for candidate_name in candidates:
+                        prior_alpha, prior_beta = self.get_prior(context_text, candidate_name)
                         prior_p = prior_alpha / (prior_alpha + prior_beta)
                         
-                        precision, reward_vector = tool_params.get(tool_name, (None, None))
+                        precision, reward_vector = tool_params.get(candidate_name, (None, None))
                         if precision is None or reward_vector is None:
                             precision = self.lambda_val * np.ones(d_aug, dtype=np.float32) if self.diagonal_covariance else self.lambda_val * np.eye(d_aug, dtype=np.float32)
                             reward_vector = np.zeros(d_aug, dtype=np.float32)
@@ -1262,14 +1234,14 @@ class BayesianRouter:
 
                         if score > highest_score:
                             highest_score = score
-                            best_tool = tool_name
+                            best_candidate = candidate_name
 
-                    if best_tool is None:
-                        best_tool = candidate_tools[0]
+                    if best_candidate is None:
+                        best_candidate = candidates[0]
 
-                    trace_id = self._generate_trace_id(context_key, best_tool)
-                    self.storage.log_selection(trace_id, context_key, best_tool)
-                    results.append((best_tool, trace_id))
+                    trace_id = self._generate_trace_id(context_key, best_candidate)
+                    self.storage.log_selection(trace_id, context_key, best_candidate)
+                    results.append((best_candidate, trace_id))
 
                 return results
 
@@ -1282,13 +1254,13 @@ class BayesianRouter:
                         e,
                         {
                             "contexts": contexts,
-                            "candidate_tools": candidate_tools,
+                            "candidates": candidates,
                         },
                     )
                 except Exception as hook_err:
                     logger.error(f"Telemetry hook failed: {hook_err}")
 
-            fallback_choice = self.fallback_tool if (self.fallback_tool and self.fallback_tool in candidate_tools) else candidate_tools[0]
+            fallback_choice = self.fallback_candidate if (self.fallback_candidate and self.fallback_candidate in candidates) else candidates[0]
             fallback_trace_id = self._generate_trace_id("fallback_ctx", fallback_choice)
             for _ in contexts:
                 self.storage.log_selection(fallback_trace_id, "fallback_ctx", fallback_choice)
@@ -1320,27 +1292,23 @@ class BayesianRouter:
                 
                 trace_id = fb.get("trace_id")
                 if trace_id is not None:
-                    context_key, tool_name = self._decode_trace_id(trace_id)
+                    context_key, candidate_name = self._decode_trace_id(trace_id)
                     prepared_feedbacks.append({
                         "type": "trace",
                         "context_key": context_key,
-                        "tool_name": tool_name,
+                        "candidate_name": candidate_name,
                         "reward_val": reward_val,
                     })
                 else:
                     context_text = fb.get("context_text") if fb.get("context_text") is not None else fb.get("context_key")
-                    tool_name = None
-                    for k in ("tool_name", "candidate_name", "skill_name", "candidate"):
-                        if fb.get(k) is not None:
-                            tool_name = fb.get(k)
-                            break
-                    if not context_text or not tool_name:
+                    candidate_name = fb.get("candidate_name")
+                    if not context_text or not candidate_name:
                         raise ValueError("Feedback must contain either 'trace_id' or context and candidate identifiers.")
                     
                     prepared_feedbacks.append({
                         "type": "text",
                         "context_text": context_text,
-                        "tool_name": tool_name,
+                        "candidate_name": candidate_name,
                         "reward_val": reward_val,
                     })
                     contexts_to_embed.append(context_text)
@@ -1362,14 +1330,14 @@ class BayesianRouter:
             if self.mode == "clustering":
                 updates = []
                 for fb in prepared_feedbacks:
-                    updates.append((fb["context_key"], fb["tool_name"], self.decay_factor, fb["reward_val"]))
+                    updates.append((fb["context_key"], fb["candidate_name"], self.decay_factor, fb["reward_val"]))
                 self.storage.decay_and_update_batch(updates)
             elif self.hybrid:
                 updates = []
                 for fb in prepared_feedbacks:
-                    tool_name = fb["tool_name"]
+                    candidate_name = fb["candidate_name"]
                     reward_val = fb["reward_val"]
-                    t_a = self._get_tool_embedding(tool_name)
+                    t_a = self._get_candidate_embedding(candidate_name)
 
                     if fb["type"] == "trace":
                         x_seq = self._context_store.get_context_vector(fb["context_key"])
@@ -1389,8 +1357,8 @@ class BayesianRouter:
 
                     x_augmented = np.concatenate([x, t_a, [1.0]])
 
-                    if tool_name in self.priors:
-                        alpha, beta = self.priors[tool_name]
+                    if candidate_name in self.priors:
+                        alpha, beta = self.priors[candidate_name]
                         prior_p = alpha / (alpha + beta)
                     else:
                         prior_p = 0.5
@@ -1402,7 +1370,7 @@ class BayesianRouter:
             else:
                 updates = []
                 for fb in prepared_feedbacks:
-                    tool_name = fb["tool_name"]
+                    candidate_name = fb["candidate_name"]
                     reward_val = fb["reward_val"]
                     
                     if fb["type"] == "trace":
@@ -1412,7 +1380,7 @@ class BayesianRouter:
                                 f"Context vector not found for key {fb['context_key']}. Using zero vector as fallback."
                             )
                             d = 384
-                            precision, _ = self.storage.get_linear_params(tool_name)
+                            precision, _ = self.storage.get_linear_params(candidate_name)
                             if precision is not None:
                                 d = len(precision) - 1
                             x = np.zeros(d, dtype=np.float32)
@@ -1423,13 +1391,13 @@ class BayesianRouter:
                     
                     x_augmented = np.append(x, 1.0)
                     
-                    if tool_name in self.priors:
-                        alpha, beta = self.priors[tool_name]
+                    if candidate_name in self.priors:
+                        alpha, beta = self.priors[candidate_name]
                         prior_p = alpha / (alpha + beta)
                     else:
                         prior_p = 0.5
                         
-                    updates.append((tool_name, self.decay_factor, reward_val, x_augmented, self.lambda_val, prior_p, self.diagonal_covariance))
+                    updates.append((candidate_name, self.decay_factor, reward_val, x_augmented, self.lambda_val, prior_p, self.diagonal_covariance))
                     
                 self.storage.decay_and_update_linear_batch(updates)
 
@@ -1452,7 +1420,7 @@ class BayesianRouter:
 
 class AsyncBayesianRouter:
     """
-    Decoupled tool routing middleware implementing a Contextual Multi-Armed Bandit
+    Decoupled candidate routing middleware implementing a Contextual Multi-Armed Bandit
     via Thompson Sampling with fully asynchronous operation.
     """
 
@@ -1465,7 +1433,7 @@ class AsyncBayesianRouter:
         priors: Optional[Dict[str, Tuple[float, float]]] = None,
         contextual_priors: Optional[List[Dict[str, Any]]] = None,
         vector_store: Optional[AsyncVectorStoreProtocol] = None,
-        fallback_tool: Optional[str] = None,
+        fallback_candidate: Optional[str] = None,
         telemetry_hook: Optional[Callable[[str, Exception, Dict[str, Any]], Any]] = None,
         mode: str = "clustering",
         exploration_weight: float = 1.0,
@@ -1473,8 +1441,8 @@ class AsyncBayesianRouter:
         diagonal_covariance: bool = False,
         secret_key: Optional[Union[str, bytes]] = None,
         hybrid: bool = False,
-        tool_embeddings: Optional[Dict[str, Union[Sequence[float], np.ndarray]]] = None,
-        tool_metadata: Optional[Dict[str, str]] = None,
+        candidate_embeddings: Optional[Dict[str, Union[Sequence[float], np.ndarray]]] = None,
+        candidate_metadata: Optional[Dict[str, str]] = None,
         storage_backend: Optional[str] = None,
         storage_path: Optional[str] = None,
         storage_kwargs: Optional[Dict[str, Any]] = None,
@@ -1504,7 +1472,7 @@ class AsyncBayesianRouter:
 
         self.storage = storage or AsyncInMemoryStorage()
         self.embedder = embedder
-        self.fallback_tool = fallback_tool
+        self.fallback_candidate = fallback_candidate
         self.telemetry_hook = telemetry_hook
         
         self.mode = mode
@@ -1514,9 +1482,9 @@ class AsyncBayesianRouter:
         self.lambda_val = lambda_val
         self.diagonal_covariance = diagonal_covariance
         self.hybrid = hybrid
-        self.tool_embeddings = tool_embeddings
-        self.tool_metadata = tool_metadata
-        self._tool_embedding_cache: Dict[str, np.ndarray] = {}
+        self.candidate_embeddings = candidate_embeddings
+        self.candidate_metadata = candidate_metadata
+        self._candidate_embedding_cache: Dict[str, np.ndarray] = {}
 
         if self.hybrid and self.mode not in ("lints", "linucb"):
             raise ValueError("Hybrid mode is only supported with linear bandit modes ('lints', 'linucb').")
@@ -1560,7 +1528,7 @@ class AsyncBayesianRouter:
                 priors_map = {}
                 for t_name, params in item["priors"].items():
                     if not isinstance(params, (list, tuple)) or len(params) != 2:
-                        raise ValueError(f"Prior parameters for tool '{t_name}' must be a tuple/list of (alpha, beta).")
+                        raise ValueError(f"Prior parameters for candidate '{t_name}' must be a tuple/list of (alpha, beta).")
                     priors_map[t_name] = (float(params[0]), float(params[1]))
                 parsed_item["priors"] = priors_map
 
@@ -1635,26 +1603,26 @@ class AsyncBayesianRouter:
         sha256_hash = hashlib.sha256(normalized.encode("utf-8")).hexdigest()
         return f"hash_{sha256_hash}"
 
-    async def _get_tool_embedding(self, tool_name: str) -> np.ndarray:
-        if tool_name in self._tool_embedding_cache:
-            return self._tool_embedding_cache[tool_name]
+    async def _get_candidate_embedding(self, candidate_name: str) -> np.ndarray:
+        if candidate_name in self._candidate_embedding_cache:
+            return self._candidate_embedding_cache[candidate_name]
 
         # 1. Direct embedding
-        if self.tool_embeddings and tool_name in self.tool_embeddings:
-            emb = np.array(self.tool_embeddings[tool_name], dtype=np.float32)
-            self._tool_embedding_cache[tool_name] = emb
+        if self.candidate_embeddings and candidate_name in self.candidate_embeddings:
+            emb = np.array(self.candidate_embeddings[candidate_name], dtype=np.float32)
+            self._candidate_embedding_cache[candidate_name] = emb
             return emb
 
         # 2. Metadata string
-        if self.tool_metadata and tool_name in self.tool_metadata:
+        if self.candidate_metadata and candidate_name in self.candidate_metadata:
             if self.embedder is None:
-                raise ValueError("ContextEmbedder/AsyncContextEmbedder is required to embed tool metadata.")
+                raise ValueError("ContextEmbedder/AsyncContextEmbedder is required to embed candidate metadata.")
             if hasattr(self.embedder, "aembed_query"):
-                raw_emb = await self.embedder.aembed_query(self.tool_metadata[tool_name])
+                raw_emb = await self.embedder.aembed_query(self.candidate_metadata[candidate_name])
             else:
-                raw_emb = self.embedder.embed_query(self.tool_metadata[tool_name])
+                raw_emb = self.embedder.embed_query(self.candidate_metadata[candidate_name])
             emb = np.array(raw_emb, dtype=np.float32)
-            self._tool_embedding_cache[tool_name] = emb
+            self._candidate_embedding_cache[candidate_name] = emb
             return emb
 
         # 3. Fallback
@@ -1662,11 +1630,11 @@ class AsyncBayesianRouter:
             emb = np.array([0.0], dtype=np.float32)
         else:
             if hasattr(self.embedder, "aembed_query"):
-                raw_emb = await self.embedder.aembed_query(tool_name)
+                raw_emb = await self.embedder.aembed_query(candidate_name)
             else:
-                raw_emb = self.embedder.embed_query(tool_name)
+                raw_emb = self.embedder.embed_query(candidate_name)
             emb = np.array(raw_emb, dtype=np.float32)
-        self._tool_embedding_cache[tool_name] = emb
+        self._candidate_embedding_cache[candidate_name] = emb
         return emb
 
     async def _resolve_context_key(self, context_text: str) -> str:
@@ -1698,7 +1666,7 @@ class AsyncBayesianRouter:
             await self.storage.save_vector(new_key, vector)
         return new_key
 
-    async def get_prior(self, context_text: str, tool_name: str) -> Tuple[float, float]:
+    async def get_prior(self, context_text: str, candidate_name: str) -> Tuple[float, float]:
         """
         Retrieve context-specific prior parameters if a matching contextual prior rule exists.
         Falls back to global priors or default (1.0, 1.0).
@@ -1710,8 +1678,8 @@ class AsyncBayesianRouter:
                 pattern = prior_item.get("pattern")
                 if pattern is not None:
                     if pattern.search(context_text):
-                        if tool_name in prior_item["priors"]:
-                            return prior_item["priors"][tool_name]
+                        if candidate_name in prior_item["priors"]:
+                            return prior_item["priors"][candidate_name]
                         continue
 
                 # 2. Embedding similarity matching
@@ -1752,17 +1720,17 @@ class AsyncBayesianRouter:
                                 similarity = float(np.dot(query_vector, ref_vector) / (q_norm * r_norm))
                                 threshold = prior_item.get("similarity_threshold", self.similarity_threshold)
                                 if similarity >= threshold:
-                                    if tool_name in prior_item["priors"]:
-                                        return prior_item["priors"][tool_name]
+                                    if candidate_name in prior_item["priors"]:
+                                        return prior_item["priors"][candidate_name]
                                     continue
         # Fall back to global priors
-        return self.priors.get(tool_name, (1.0, 1.0))
+        return self.priors.get(candidate_name, (1.0, 1.0))
 
-    def _generate_trace_id(self, context_key: str, tool_name: str) -> str:
-        """Encodes context key and tool name into a stateless token and signs it using HMAC."""
+    def _generate_trace_id(self, context_key: str, candidate_name: str) -> str:
+        """Encodes context key and candidate name into a stateless token and signs it using HMAC."""
         payload = {
             "ctx": context_key,
-            "tool": tool_name,
+            "candidate": candidate_name,
             "nonce": uuid.uuid4().hex,
         }
         json_bytes = json.dumps(payload).encode("utf-8")
@@ -1775,7 +1743,7 @@ class AsyncBayesianRouter:
         return f"{payload_b64}.{signature_b64}"
 
     def _decode_trace_id(self, trace_id: str) -> Tuple[str, str]:
-        """Decodes and verifies context key and tool name from a signed trace ID token."""
+        """Decodes and verifies context key and candidate name from a signed trace ID token."""
         try:
             if "." not in trace_id:
                 raise ValueError("Missing signature in trace ID")
@@ -1791,7 +1759,7 @@ class AsyncBayesianRouter:
                 
             json_bytes = base64.urlsafe_b64decode(payload_b64.encode("utf-8"))
             payload = json.loads(json_bytes.decode("utf-8"))
-            return payload["ctx"], payload["tool"]
+            return payload["ctx"], payload["candidate"]
         except Exception as e:
             raise ValueError(f"Invalid or corrupted trace ID: {trace_id}") from e
 
@@ -1809,68 +1777,63 @@ class AsyncBayesianRouter:
     async def aroute(
         self,
         context_text: Optional[str] = None,
-        candidate_tools: Optional[List[str]] = None,
-        context_key: Optional[str] = None,
         candidates: Optional[List[str]] = None,
+        context_key: Optional[str] = None,
     ) -> str:
-        chosen_tool, _ = await self.aroute_with_trace(
+        chosen_candidate, _ = await self.aroute_with_trace(
             context_text=context_text,
-            candidate_tools=candidate_tools,
-            context_key=context_key,
             candidates=candidates,
+            context_key=context_key,
         )
-        return chosen_tool
+        return chosen_candidate
 
     async def aroute_with_trace(
         self,
         context_text: Optional[str] = None,
-        candidate_tools: Optional[List[str]] = None,
-        context_key: Optional[str] = None,
         candidates: Optional[List[str]] = None,
+        context_key: Optional[str] = None,
     ) -> Tuple[str, str]:
         resolved_context = context_text if context_text is not None else context_key
         if resolved_context is None:
             raise ValueError("Must provide either 'context_text' or 'context_key'")
 
-        resolved_candidates = candidate_tools if candidate_tools is not None else candidates
-        if resolved_candidates is None:
-            raise ValueError("Must provide either 'candidate_tools' or 'candidates'")
+        if candidates is None:
+            raise ValueError("Must provide 'candidates'")
 
         context_text = resolved_context
-        candidate_tools = resolved_candidates
 
-        if not candidate_tools:
-            raise ValueError("Candidate tools list cannot be empty")
+        if not candidates:
+            raise ValueError("Candidates list cannot be empty")
 
         await self._ensure_initialized()
 
         try:
             if self.mode == "clustering":
                 context_key = await self._resolve_context_key(context_text)
-                best_tool = None
+                best_candidate = None
                 highest_sample = -1.0
 
-                for tool_name in candidate_tools:
-                    alpha, beta = await self.storage.get_tool_params(context_key, tool_name)
+                for candidate_name in candidates:
+                    alpha, beta = await self.storage.get_candidate_params(context_key, candidate_name)
 
                     if alpha == 1.0 and beta == 1.0:
-                        prior_alpha, prior_beta = await self.get_prior(context_text, tool_name)
+                        prior_alpha, prior_beta = await self.get_prior(context_text, candidate_name)
                         if prior_alpha != 1.0 or prior_beta != 1.0:
                             alpha, beta = prior_alpha, prior_beta
-                            await self.storage.update_tool_params(context_key, tool_name, alpha, beta)
+                            await self.storage.update_candidate_params(context_key, candidate_name, alpha, beta)
 
                     sampled_score = np.random.beta(alpha, beta)
 
                     if sampled_score > highest_sample:
                         highest_sample = sampled_score
-                        best_tool = tool_name
+                        best_candidate = candidate_name
 
-                if best_tool is None:
-                    best_tool = candidate_tools[0]
+                if best_candidate is None:
+                    best_candidate = candidates[0]
 
-                trace_id = self._generate_trace_id(context_key, best_tool)
-                await self.storage.log_selection(trace_id, context_key, best_tool)
-                return best_tool, trace_id
+                trace_id = self._generate_trace_id(context_key, best_candidate)
+                await self.storage.log_selection(trace_id, context_key, best_candidate)
+                return best_candidate, trace_id
 
             elif self.hybrid:
                 if self.embedder is None:
@@ -1884,10 +1847,10 @@ class AsyncBayesianRouter:
                 x_c = np.array(x_seq, dtype=np.float32)
                 context_key = await self._resolve_context_key(context_text)
 
-                if not candidate_tools:
-                    raise ValueError("Candidate tools list cannot be empty")
+                if not candidates:
+                    raise ValueError("Candidate candidates list cannot be empty")
                 
-                t_first = await self._get_tool_embedding(candidate_tools[0])
+                t_first = await self._get_candidate_embedding(candidates[0])
                 d_aug = len(x_c) + len(t_first) + 1
                 
                 precision, reward_vector = await self.storage.aget_linear_params("__shared_hybrid__")
@@ -1917,11 +1880,11 @@ class AsyncBayesianRouter:
                                 theta_hat, (self.exploration_weight ** 2) * cov
                             )
 
-                best_tool = None
+                best_candidate = None
                 highest_score = -float("inf")
 
-                for tool_name in candidate_tools:
-                    t_a = await self._get_tool_embedding(tool_name)
+                for candidate_name in candidates:
+                    t_a = await self._get_candidate_embedding(candidate_name)
                     x_augmented = np.concatenate([x_c, t_a, [1.0]])
 
                     if self.mode == "lints":
@@ -1937,14 +1900,14 @@ class AsyncBayesianRouter:
 
                     if score > highest_score:
                         highest_score = score
-                        best_tool = tool_name
+                        best_candidate = candidate_name
 
-                if best_tool is None:
-                    best_tool = candidate_tools[0]
+                if best_candidate is None:
+                    best_candidate = candidates[0]
 
-                trace_id = self._generate_trace_id(context_key, best_tool)
-                await self.storage.log_selection(trace_id, context_key, best_tool)
-                return best_tool, trace_id
+                trace_id = self._generate_trace_id(context_key, best_candidate)
+                await self.storage.log_selection(trace_id, context_key, best_candidate)
+                return best_candidate, trace_id
 
             else:
                 if self.embedder is None:
@@ -1961,14 +1924,14 @@ class AsyncBayesianRouter:
                 x_augmented = np.append(x, 1.0)
                 d_aug = d + 1
                 
-                best_tool = None
+                best_candidate = None
                 highest_score = -float("inf")
                 
-                for tool_name in candidate_tools:
-                    prior_alpha, prior_beta = await self.get_prior(context_text, tool_name)
+                for candidate_name in candidates:
+                    prior_alpha, prior_beta = await self.get_prior(context_text, candidate_name)
                     prior_p = prior_alpha / (prior_alpha + prior_beta)
                     
-                    precision, reward_vector = await self.storage.aget_linear_params(tool_name)
+                    precision, reward_vector = await self.storage.aget_linear_params(candidate_name)
                     if precision is None or reward_vector is None:
                         precision = self.lambda_val * np.ones(d_aug, dtype=np.float32) if self.diagonal_covariance else self.lambda_val * np.eye(d_aug, dtype=np.float32)
                         reward_vector = np.zeros(d_aug, dtype=np.float32)
@@ -2006,14 +1969,14 @@ class AsyncBayesianRouter:
 
                     if score > highest_score:
                         highest_score = score
-                        best_tool = tool_name
+                        best_candidate = candidate_name
 
-                if best_tool is None:
-                    best_tool = candidate_tools[0]
+                if best_candidate is None:
+                    best_candidate = candidates[0]
 
-                trace_id = self._generate_trace_id(context_key, best_tool)
-                await self.storage.log_selection(trace_id, context_key, best_tool)
-                return best_tool, trace_id
+                trace_id = self._generate_trace_id(context_key, best_candidate)
+                await self.storage.log_selection(trace_id, context_key, best_candidate)
+                return best_candidate, trace_id
 
         except Exception as e:
             logger.exception(
@@ -2024,14 +1987,14 @@ class AsyncBayesianRouter:
                 e,
                 {
                     "context_text": context_text,
-                    "candidate_tools": candidate_tools,
+                    "candidates": candidates,
                 },
             )
 
-            if self.fallback_tool and self.fallback_tool in candidate_tools:
-                fallback_choice = self.fallback_tool
+            if self.fallback_candidate and self.fallback_candidate in candidates:
+                fallback_choice = self.fallback_candidate
             else:
-                fallback_choice = candidate_tools[0]
+                fallback_choice = candidates[0]
 
             fallback_trace_id = self._generate_trace_id("fallback_ctx", fallback_choice)
             await self.storage.log_selection(fallback_trace_id, "fallback_ctx", fallback_choice)
@@ -2040,28 +2003,19 @@ class AsyncBayesianRouter:
     async def afeedback(
         self,
         context_text: Optional[str] = None,
-        tool_name: Optional[str] = None,
+        candidate_name: Optional[str] = None,
         success: Optional[bool] = None,
         reward: Optional[float] = None,
         context_key: Optional[str] = None,
-        candidate_name: Optional[str] = None,
-        skill_name: Optional[str] = None,
-        candidate: Optional[str] = None,
     ) -> Tuple[float, float]:
         resolved_context = context_text if context_text is not None else context_key
         if resolved_context is None:
             raise ValueError("Must provide either 'context_text' or 'context_key'")
 
-        resolved_tool = None
-        for val in (tool_name, candidate_name, skill_name, candidate):
-            if val is not None:
-                resolved_tool = val
-                break
-        if resolved_tool is None:
-            raise ValueError("Must provide a tool/candidate/skill name.")
+        if candidate_name is None:
+            raise ValueError("Must provide a candidate_name.")
 
         context_text = resolved_context
-        tool_name = resolved_tool
 
         if success is None and reward is None:
             raise ValueError("Either 'success' or 'reward' must be provided.")
@@ -2087,7 +2041,7 @@ class AsyncBayesianRouter:
             if self.mode == "clustering":
                 context_key = await self._resolve_context_key(context_text)
                 return await self.storage.decay_and_update(
-                    context_key, tool_name, self.decay_factor, reward_val
+                    context_key, candidate_name, self.decay_factor, reward_val
                 )
             elif self.hybrid:
                 if self.embedder is None:
@@ -2099,14 +2053,14 @@ class AsyncBayesianRouter:
                     x_seq = self.embedder.embed_query(context_text)
                 
                 x_c = np.array(x_seq, dtype=np.float32)
-                t_a = await self._get_tool_embedding(tool_name)
+                t_a = await self._get_candidate_embedding(candidate_name)
                 x_augmented = np.concatenate([x_c, t_a, [1.0]])
 
-                prior_alpha, prior_beta = await self.get_prior(context_text, tool_name)
+                prior_alpha, prior_beta = await self.get_prior(context_text, candidate_name)
                 prior_p = prior_alpha / (prior_alpha + prior_beta)
 
                 precision, reward_vector = await self.storage.adecay_and_update_linear(
-                    tool_name="__shared_hybrid__",
+                    candidate_name="__shared_hybrid__",
                     decay_factor=self.decay_factor,
                     reward=reward_val,
                     x_augmented=x_augmented,
@@ -2140,14 +2094,14 @@ class AsyncBayesianRouter:
                 context_key = await self._resolve_context_key(context_text)
                 x_augmented = np.append(x, 1.0)
                 
-                if tool_name in self.priors:
-                    alpha, beta = self.priors[tool_name]
+                if candidate_name in self.priors:
+                    alpha, beta = self.priors[candidate_name]
                     prior_p = alpha / (alpha + beta)
                 else:
                     prior_p = 0.5
                 
                 precision, reward_vector = await self.storage.adecay_and_update_linear(
-                    tool_name=tool_name,
+                    candidate_name=candidate_name,
                     decay_factor=self.decay_factor,
                     reward=reward_val,
                     x_augmented=x_augmented,
@@ -2175,7 +2129,7 @@ class AsyncBayesianRouter:
                 e,
                 {
                     "context_text": context_text,
-                    "tool_name": tool_name,
+                    "candidate_name": candidate_name,
                     "success": success,
                     "reward": reward,
                 },
@@ -2209,15 +2163,15 @@ class AsyncBayesianRouter:
         await self._ensure_initialized()
 
         try:
-            context_key, tool_name = self._decode_trace_id(trace_id)
+            context_key, candidate_name = self._decode_trace_id(trace_id)
             await self.storage.log_feedback(trace_id, reward_val)
             if self.mode == "clustering":
                 return await self.storage.decay_and_update(
-                    context_key, tool_name, self.decay_factor, reward_val
+                    context_key, candidate_name, self.decay_factor, reward_val
                 )
             elif self.hybrid:
                 x_seq = await self._context_store.aget_context_vector(context_key)
-                t_a = await self._get_tool_embedding(tool_name)
+                t_a = await self._get_candidate_embedding(candidate_name)
                 if x_seq is None:
                     logger.warning(
                         f"Context vector not found for key {context_key}. Using zero vector as fallback."
@@ -2232,14 +2186,14 @@ class AsyncBayesianRouter:
                 
                 x_augmented = np.concatenate([x, t_a, [1.0]])
                 
-                if tool_name in self.priors:
-                    alpha, beta = self.priors[tool_name]
+                if candidate_name in self.priors:
+                    alpha, beta = self.priors[candidate_name]
                     prior_p = alpha / (alpha + beta)
                 else:
                     prior_p = 0.5
                 
                 precision, reward_vector = await self.storage.adecay_and_update_linear(
-                    tool_name="__shared_hybrid__",
+                    candidate_name="__shared_hybrid__",
                     decay_factor=self.decay_factor,
                     reward=reward_val,
                     x_augmented=x_augmented,
@@ -2267,7 +2221,7 @@ class AsyncBayesianRouter:
                         f"Context vector not found for key {context_key}. Using zero vector as fallback."
                     )
                     d = 384
-                    precision, _ = await self.storage.aget_linear_params(tool_name)
+                    precision, _ = await self.storage.aget_linear_params(candidate_name)
                     if precision is not None:
                         d = len(precision) - 1
                     x = np.zeros(d, dtype=np.float32)
@@ -2276,14 +2230,14 @@ class AsyncBayesianRouter:
                 
                 x_augmented = np.append(x, 1.0)
                 
-                if tool_name in self.priors:
-                    alpha, beta = self.priors[tool_name]
+                if candidate_name in self.priors:
+                    alpha, beta = self.priors[candidate_name]
                     prior_p = alpha / (alpha + beta)
                 else:
                     prior_p = 0.5
                 
                 precision, reward_vector = await self.storage.adecay_and_update_linear(
-                    tool_name=tool_name,
+                    candidate_name=candidate_name,
                     decay_factor=self.decay_factor,
                     reward=reward_val,
                     x_augmented=x_augmented,
@@ -2317,37 +2271,28 @@ class AsyncBayesianRouter:
             )
             return 1.0, 1.0
 
-    async def aget_tool_beliefs(
+    async def aget_candidate_beliefs(
         self,
         context_text: Optional[str] = None,
-        tool_name: Optional[str] = None,
-        context_key: Optional[str] = None,
         candidate_name: Optional[str] = None,
-        skill_name: Optional[str] = None,
-        candidate: Optional[str] = None,
+        context_key: Optional[str] = None,
     ) -> Tuple[float, float]:
         resolved_context = context_text if context_text is not None else context_key
         if resolved_context is None:
             raise ValueError("Must provide either 'context_text' or 'context_key'")
 
-        resolved_tool = None
-        for val in (tool_name, candidate_name, skill_name, candidate):
-            if val is not None:
-                resolved_tool = val
-                break
-        if resolved_tool is None:
-            raise ValueError("Must provide a tool/candidate/skill name.")
+        if candidate_name is None:
+            raise ValueError("Must provide a candidate_name.")
 
         context_text = resolved_context
-        tool_name = resolved_tool
 
         await self._ensure_initialized()
         try:
             context_key = await self._resolve_context_key(context_text)
             if self.mode == "clustering":
-                alpha, beta = await self.storage.get_tool_params(context_key, tool_name)
+                alpha, beta = await self.storage.get_candidate_params(context_key, candidate_name)
                 if alpha == 1.0 and beta == 1.0:
-                    alpha, beta = await self.get_prior(context_text, tool_name)
+                    alpha, beta = await self.get_prior(context_text, candidate_name)
                 return alpha, beta
             elif self.hybrid:
                 if self.embedder is None:
@@ -2359,11 +2304,11 @@ class AsyncBayesianRouter:
                     x_seq = self.embedder.embed_query(context_text)
                     
                 x_c = np.array(x_seq, dtype=np.float32)
-                t_a = await self._get_tool_embedding(tool_name)
+                t_a = await self._get_candidate_embedding(candidate_name)
                 x_augmented = np.concatenate([x_c, t_a, [1.0]])
                 d_aug = len(x_augmented)
 
-                prior_alpha, prior_beta = await self.get_prior(context_text, tool_name)
+                prior_alpha, prior_beta = await self.get_prior(context_text, candidate_name)
                 prior_p = prior_alpha / (prior_alpha + prior_beta)
 
                 precision, reward_vector = await self.storage.aget_linear_params("__shared_hybrid__")
@@ -2397,10 +2342,10 @@ class AsyncBayesianRouter:
                 x_augmented = np.append(x, 1.0)
                 d_aug = len(x_augmented)
                 
-                prior_alpha, prior_beta = await self.get_prior(context_text, tool_name)
+                prior_alpha, prior_beta = await self.get_prior(context_text, candidate_name)
                 prior_p = prior_alpha / (prior_alpha + prior_beta)
                 
-                precision, reward_vector = await self.storage.aget_linear_params(tool_name)
+                precision, reward_vector = await self.storage.aget_linear_params(candidate_name)
                 if precision is None or reward_vector is None:
                     precision = self.lambda_val * np.ones(d_aug, dtype=np.float32) if self.diagonal_covariance else self.lambda_val * np.eye(d_aug, dtype=np.float32)
                     reward_vector = np.zeros(d_aug, dtype=np.float32)
@@ -2418,13 +2363,13 @@ class AsyncBayesianRouter:
                 
                 return expected_reward, uncertainty
         except Exception as e:
-            logger.exception("AsyncBayesianRouter aget_tool_beliefs failed.")
+            logger.exception("AsyncBayesianRouter aget_candidate_beliefs failed.")
             await self._call_telemetry(
-                "get_tool_beliefs_failure",
+                "get_candidate_beliefs_failure",
                 e,
                 {
                     "context_text": context_text,
-                    "tool_name": tool_name,
+                    "candidate_name": candidate_name,
                 },
             )
             return 1.0, 1.0
@@ -2480,28 +2425,23 @@ class AsyncBayesianRouter:
     async def aroute_batch(
         self,
         contexts: List[str],
-        candidate_tools: Optional[List[str]] = None,
         candidates: Optional[List[str]] = None,
     ) -> List[str]:
-        resolved_candidates = candidate_tools if candidate_tools is not None else candidates
-        if resolved_candidates is None:
-            raise ValueError("Must provide either 'candidate_tools' or 'candidates'")
-        results = await self.aroute_batch_with_trace(contexts, candidate_tools=resolved_candidates)
-        return [tool for tool, _ in results]
+        if candidates is None:
+            raise ValueError("Must provide 'candidates'")
+        results = await self.aroute_batch_with_trace(contexts, candidates=candidates)
+        return [candidate for candidate, _ in results]
 
     async def aroute_batch_with_trace(
         self,
         contexts: List[str],
-        candidate_tools: Optional[List[str]] = None,
         candidates: Optional[List[str]] = None,
     ) -> List[Tuple[str, str]]:
-        resolved_candidates = candidate_tools if candidate_tools is not None else candidates
-        if resolved_candidates is None:
-            raise ValueError("Must provide either 'candidate_tools' or 'candidates'")
-        candidate_tools = resolved_candidates
+        if candidates is None:
+            raise ValueError("Must provide 'candidates'")
 
-        if not candidate_tools:
-            raise ValueError("Candidate tools list cannot be empty")
+        if not candidates:
+            raise ValueError("Candidates list cannot be empty")
         if not contexts:
             return []
 
@@ -2511,44 +2451,44 @@ class AsyncBayesianRouter:
             if self.mode == "clustering":
                 context_keys = await self._resolve_context_keys(contexts)
                 
-                param_keys = [(ctx_key, tool_name) for ctx_key in context_keys for tool_name in candidate_tools]
-                param_dict = await self.storage.get_tool_params_batch(param_keys)
+                param_keys = [(ctx_key, candidate_name) for ctx_key in context_keys for candidate_name in candidates]
+                param_dict = await self.storage.get_candidate_params_batch(param_keys)
                 
                 priors_to_update = {}
                 results = []
                 for idx, context_key in enumerate(context_keys):
                     context_text = contexts[idx]
-                    best_tool = None
+                    best_candidate = None
                     highest_sample = -1.0
 
-                    for tool_name in candidate_tools:
-                        alpha, beta = param_dict.get((context_key, tool_name), (1.0, 1.0))
+                    for candidate_name in candidates:
+                        alpha, beta = param_dict.get((context_key, candidate_name), (1.0, 1.0))
 
                         if alpha == 1.0 and beta == 1.0:
-                            prior_alpha, prior_beta = await self.get_prior(context_text, tool_name)
+                            prior_alpha, prior_beta = await self.get_prior(context_text, candidate_name)
                             if prior_alpha != 1.0 or prior_beta != 1.0:
                                 alpha, beta = prior_alpha, prior_beta
-                                priors_to_update[(context_key, tool_name)] = (alpha, beta)
+                                priors_to_update[(context_key, candidate_name)] = (alpha, beta)
 
                         sampled_score = np.random.beta(alpha, beta)
 
                         if sampled_score > highest_sample:
                             highest_sample = sampled_score
-                            best_tool = tool_name
+                            best_candidate = candidate_name
 
-                    if best_tool is None:
-                        best_tool = candidate_tools[0]
+                    if best_candidate is None:
+                        best_candidate = candidates[0]
 
-                    trace_id = self._generate_trace_id(context_key, best_tool)
-                    await self.storage.log_selection(trace_id, context_key, best_tool)
-                    results.append((best_tool, trace_id))
+                    trace_id = self._generate_trace_id(context_key, best_candidate)
+                    await self.storage.log_selection(trace_id, context_key, best_candidate)
+                    results.append((best_candidate, trace_id))
 
                 if priors_to_update:
-                    if hasattr(self.storage, "update_tool_params_batch"):
-                        await self.storage.update_tool_params_batch(priors_to_update)
+                    if hasattr(self.storage, "update_candidate_params_batch"):
+                        await self.storage.update_candidate_params_batch(priors_to_update)
                     else:
-                        for (ctx_key, tool_name), (alpha, beta) in priors_to_update.items():
-                            await self.storage.update_tool_params(ctx_key, tool_name, alpha, beta)
+                        for (ctx_key, candidate_name), (alpha, beta) in priors_to_update.items():
+                            await self.storage.update_candidate_params(ctx_key, candidate_name, alpha, beta)
 
                 return results
 
@@ -2567,7 +2507,7 @@ class AsyncBayesianRouter:
 
                 context_keys = await self._resolve_context_keys(contexts)
                 
-                t_first = await self._get_tool_embedding(candidate_tools[0])
+                t_first = await self._get_candidate_embedding(candidates[0])
                 d_aug = len(vectors[0]) + len(t_first) + 1
                 
                 precision, reward_vector = await self.storage.aget_linear_params("__shared_hybrid__")
@@ -2602,11 +2542,11 @@ class AsyncBayesianRouter:
                                     theta_hat, (self.exploration_weight ** 2) * cov
                                 )
 
-                    best_tool = None
+                    best_candidate = None
                     highest_score = -float("inf")
 
-                    for tool_name in candidate_tools:
-                        t_a = await self._get_tool_embedding(tool_name)
+                    for candidate_name in candidates:
+                        t_a = await self._get_candidate_embedding(candidate_name)
                         x_augmented = np.concatenate([x_c, t_a, [1.0]])
 
                         if self.mode == "lints":
@@ -2622,14 +2562,14 @@ class AsyncBayesianRouter:
 
                         if score > highest_score:
                             highest_score = score
-                            best_tool = tool_name
+                            best_candidate = candidate_name
 
-                    if best_tool is None:
-                        best_tool = candidate_tools[0]
+                    if best_candidate is None:
+                        best_candidate = candidates[0]
 
-                    trace_id = self._generate_trace_id(context_key, best_tool)
-                    await self.storage.log_selection(trace_id, context_key, best_tool)
-                    results.append((best_tool, trace_id))
+                    trace_id = self._generate_trace_id(context_key, best_candidate)
+                    await self.storage.log_selection(trace_id, context_key, best_candidate)
+                    results.append((best_candidate, trace_id))
 
                 return results
 
@@ -2648,10 +2588,10 @@ class AsyncBayesianRouter:
                 
                 tool_params = {}
                 if hasattr(self.storage, "aget_linear_params_batch"):
-                    tool_params = await self.storage.aget_linear_params_batch(candidate_tools)
+                    tool_params = await self.storage.aget_linear_params_batch(candidates)
                 else:
-                    for tool_name in candidate_tools:
-                        tool_params[tool_name] = await self.storage.aget_linear_params(tool_name)
+                    for candidate_name in candidates:
+                        tool_params[candidate_name] = await self.storage.aget_linear_params(candidate_name)
 
                 context_keys = await self._resolve_context_keys(contexts)
                 results = []
@@ -2663,14 +2603,14 @@ class AsyncBayesianRouter:
                     context_key = context_keys[idx]
                     context_text = contexts[idx]
                     
-                    best_tool = None
+                    best_candidate = None
                     highest_score = -float("inf")
                     
-                    for tool_name in candidate_tools:
-                        prior_alpha, prior_beta = await self.get_prior(context_text, tool_name)
+                    for candidate_name in candidates:
+                        prior_alpha, prior_beta = await self.get_prior(context_text, candidate_name)
                         prior_p = prior_alpha / (prior_alpha + prior_beta)
                         
-                        precision, reward_vector = tool_params.get(tool_name, (None, None))
+                        precision, reward_vector = tool_params.get(candidate_name, (None, None))
                         if precision is None or reward_vector is None:
                             precision = self.lambda_val * np.ones(d_aug, dtype=np.float32) if self.diagonal_covariance else self.lambda_val * np.eye(d_aug, dtype=np.float32)
                             reward_vector = np.zeros(d_aug, dtype=np.float32)
@@ -2708,14 +2648,14 @@ class AsyncBayesianRouter:
 
                         if score > highest_score:
                             highest_score = score
-                            best_tool = tool_name
+                            best_candidate = candidate_name
 
-                    if best_tool is None:
-                        best_tool = candidate_tools[0]
+                    if best_candidate is None:
+                        best_candidate = candidates[0]
 
-                    trace_id = self._generate_trace_id(context_key, best_tool)
-                    await self.storage.log_selection(trace_id, context_key, best_tool)
-                    results.append((best_tool, trace_id))
+                    trace_id = self._generate_trace_id(context_key, best_candidate)
+                    await self.storage.log_selection(trace_id, context_key, best_candidate)
+                    results.append((best_candidate, trace_id))
 
                 return results
 
@@ -2726,11 +2666,11 @@ class AsyncBayesianRouter:
                 e,
                 {
                     "contexts": contexts,
-                    "candidate_tools": candidate_tools,
+                    "candidates": candidates,
                 },
             )
 
-            fallback_choice = self.fallback_tool if (self.fallback_tool and self.fallback_tool in candidate_tools) else candidate_tools[0]
+            fallback_choice = self.fallback_candidate if (self.fallback_candidate and self.fallback_candidate in candidates) else candidates[0]
             fallback_trace_id = self._generate_trace_id("fallback_ctx", fallback_choice)
             for _ in contexts:
                 await self.storage.log_selection(fallback_trace_id, "fallback_ctx", fallback_choice)
@@ -2764,27 +2704,23 @@ class AsyncBayesianRouter:
                 
                 trace_id = fb.get("trace_id")
                 if trace_id is not None:
-                    context_key, tool_name = self._decode_trace_id(trace_id)
+                    context_key, candidate_name = self._decode_trace_id(trace_id)
                     prepared_feedbacks.append({
                         "type": "trace",
                         "context_key": context_key,
-                        "tool_name": tool_name,
+                        "candidate_name": candidate_name,
                         "reward_val": reward_val,
                     })
                 else:
                     context_text = fb.get("context_text") if fb.get("context_text") is not None else fb.get("context_key")
-                    tool_name = None
-                    for k in ("tool_name", "candidate_name", "skill_name", "candidate"):
-                        if fb.get(k) is not None:
-                            tool_name = fb.get(k)
-                            break
-                    if not context_text or not tool_name:
+                    candidate_name = fb.get("candidate_name")
+                    if not context_text or not candidate_name:
                         raise ValueError("Feedback must contain either 'trace_id' or context and candidate identifiers.")
                     
                     prepared_feedbacks.append({
                         "type": "text",
                         "context_text": context_text,
-                        "tool_name": tool_name,
+                        "candidate_name": candidate_name,
                         "reward_val": reward_val,
                     })
                     contexts_to_embed.append(context_text)
@@ -2810,14 +2746,14 @@ class AsyncBayesianRouter:
             if self.mode == "clustering":
                 updates = []
                 for fb in prepared_feedbacks:
-                    updates.append((fb["context_key"], fb["tool_name"], self.decay_factor, fb["reward_val"]))
+                    updates.append((fb["context_key"], fb["candidate_name"], self.decay_factor, fb["reward_val"]))
                 await self.storage.decay_and_update_batch(updates)
             elif self.hybrid:
                 updates = []
                 for fb in prepared_feedbacks:
-                    tool_name = fb["tool_name"]
+                    candidate_name = fb["candidate_name"]
                     reward_val = fb["reward_val"]
-                    t_a = await self._get_tool_embedding(tool_name)
+                    t_a = await self._get_candidate_embedding(candidate_name)
 
                     if fb["type"] == "trace":
                         x_seq = await self._context_store.aget_context_vector(fb["context_key"])
@@ -2837,8 +2773,8 @@ class AsyncBayesianRouter:
 
                     x_augmented = np.concatenate([x, t_a, [1.0]])
 
-                    if tool_name in self.priors:
-                        alpha, beta = self.priors[tool_name]
+                    if candidate_name in self.priors:
+                        alpha, beta = self.priors[candidate_name]
                         prior_p = alpha / (alpha + beta)
                     else:
                         prior_p = 0.5
@@ -2850,7 +2786,7 @@ class AsyncBayesianRouter:
             else:
                 updates = []
                 for fb in prepared_feedbacks:
-                    tool_name = fb["tool_name"]
+                    candidate_name = fb["candidate_name"]
                     reward_val = fb["reward_val"]
                     
                     if fb["type"] == "trace":
@@ -2860,7 +2796,7 @@ class AsyncBayesianRouter:
                                 f"Context vector not found for key {fb['context_key']}. Using zero vector as fallback."
                             )
                             d = 384
-                            precision, _ = await self.storage.aget_linear_params(tool_name)
+                            precision, _ = await self.storage.aget_linear_params(candidate_name)
                             if precision is not None:
                                 d = len(precision) - 1
                             x = np.zeros(d, dtype=np.float32)
@@ -2871,13 +2807,13 @@ class AsyncBayesianRouter:
                     
                     x_augmented = np.append(x, 1.0)
                     
-                    if tool_name in self.priors:
-                        alpha, beta = self.priors[tool_name]
+                    if candidate_name in self.priors:
+                        alpha, beta = self.priors[candidate_name]
                         prior_p = alpha / (alpha + beta)
                     else:
                         prior_p = 0.5
                         
-                    updates.append((tool_name, self.decay_factor, reward_val, x_augmented, self.lambda_val, prior_p, self.diagonal_covariance))
+                    updates.append((candidate_name, self.decay_factor, reward_val, x_augmented, self.lambda_val, prior_p, self.diagonal_covariance))
                     
                 await self.storage.adecay_and_update_linear_batch(updates)
 

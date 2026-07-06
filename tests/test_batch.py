@@ -27,11 +27,11 @@ def test_in_memory_storage_batch():
         ("ctx_1", "tool_b"): (5.0, 6.0),
         ("ctx_2", "tool_a"): (7.0, 8.0),
     }
-    storage.update_tool_params_batch(params)
+    storage.update_candidate_params_batch(params)
     
     # Batch retrieval
     keys = [("ctx_1", "tool_a"), ("ctx_1", "tool_b"), ("ctx_2", "tool_a"), ("ctx_2", "tool_b")]
-    res = storage.get_tool_params_batch(keys)
+    res = storage.get_candidate_params_batch(keys)
     assert res[("ctx_1", "tool_a")] == (3.0, 4.0)
     assert res[("ctx_1", "tool_b")] == (5.0, 6.0)
     assert res[("ctx_2", "tool_a")] == (7.0, 8.0)
@@ -85,10 +85,10 @@ def test_sqlite_storage_batch():
             ("ctx_1", "tool_a"): (3.0, 4.0),
             ("ctx_1", "tool_b"): (5.0, 6.0),
         }
-        storage.update_tool_params_batch(params)
+        storage.update_candidate_params_batch(params)
 
         # Batch retrieval
-        res = storage.get_tool_params_batch([("ctx_1", "tool_a"), ("ctx_1", "tool_b"), ("ctx_2", "tool_a")])
+        res = storage.get_candidate_params_batch([("ctx_1", "tool_a"), ("ctx_1", "tool_b"), ("ctx_2", "tool_a")])
         assert res[("ctx_1", "tool_a")] == (3.0, 4.0)
         assert res[("ctx_1", "tool_b")] == (5.0, 6.0)
         assert res[("ctx_2", "tool_a")] == (1.0, 1.0)
@@ -127,10 +127,10 @@ async def test_async_sqlite_storage_batch():
             ("ctx_1", "tool_a"): (3.0, 4.0),
             ("ctx_1", "tool_b"): (5.0, 6.0),
         }
-        await storage.update_tool_params_batch(params)
+        await storage.update_candidate_params_batch(params)
 
         # Batch retrieval
-        res = await storage.get_tool_params_batch([("ctx_1", "tool_a"), ("ctx_1", "tool_b"), ("ctx_2", "tool_a")])
+        res = await storage.get_candidate_params_batch([("ctx_1", "tool_a"), ("ctx_1", "tool_b"), ("ctx_2", "tool_a")])
         assert res[("ctx_1", "tool_a")] == (3.0, 4.0)
         assert res[("ctx_1", "tool_b")] == (5.0, 6.0)
         assert res[("ctx_2", "tool_a")] == (1.0, 1.0)
@@ -163,17 +163,17 @@ def test_redis_storage_batch():
     
     storage = RedisStorage(mock_client)
     
-    # 1. get_tool_params_batch
+    # 1. get_candidate_params_batch
     mock_pipeline.execute.return_value = [b"3.5", b"4.5", None, None]
     keys = [("ctx_1", "tool_a"), ("ctx_2", "tool_b")]
-    res = storage.get_tool_params_batch(keys)
+    res = storage.get_candidate_params_batch(keys)
     assert res[("ctx_1", "tool_a")] == (3.5, 4.5)
     assert res[("ctx_2", "tool_b")] == (1.0, 1.0)
     assert mock_pipeline.hget.call_count == 4
 
-    # 2. update_tool_params_batch
+    # 2. update_candidate_params_batch
     mock_pipeline.reset_mock()
-    storage.update_tool_params_batch({("ctx_1", "tool_a"): (1.5, 2.5)})
+    storage.update_candidate_params_batch({("ctx_1", "tool_a"): (1.5, 2.5)})
     mock_pipeline.hset.assert_called_once()
     mock_pipeline.execute.assert_called_once()
 
@@ -203,11 +203,11 @@ async def test_async_redis_storage_batch():
     storage = AsyncRedisStorage(mock_client)
     storage._script = mock_script
     
-    # 1. get_tool_params_batch
+    # 1. get_candidate_params_batch
     mock_pipeline.hget = MagicMock()
     mock_pipeline.execute.return_value = [b"3.5", b"4.5", None, None]
     keys = [("ctx_1", "tool_a"), ("ctx_2", "tool_b")]
-    res = await storage.get_tool_params_batch(keys)
+    res = await storage.get_candidate_params_batch(keys)
     assert res[("ctx_1", "tool_a")] == (3.5, 4.5)
     assert res[("ctx_2", "tool_b")] == (1.0, 1.0)
     assert mock_pipeline.hget.call_count == 4
@@ -227,14 +227,14 @@ def test_router_batch_routing_clustering():
     router.priors = {"tool_a": (10.0, 2.0), "tool_b": (1.0, 10.0)}
     
     contexts = ["hello world", "style clean up", "hello world"]
-    candidate_tools = ["tool_a", "tool_b"]
+    candidates = ["tool_a", "tool_b"]
     
     # Batch route
-    choices = router.route_batch(contexts, candidate_tools)
+    choices = router.route_batch(contexts, candidates)
     assert len(choices) == 3
     # Check that choices are mapped correctly: "hello world" is mapped to "tool_a" (higher prior reward)
     # and they should reuse the context keys!
-    results_with_trace = router.route_batch_with_trace(contexts, candidate_tools)
+    results_with_trace = router.route_batch_with_trace(contexts, candidates)
     assert len(results_with_trace) == 3
     
     # Check trace 0 and trace 2 use the exact same context key since they have identical context texts
@@ -250,7 +250,7 @@ def test_router_batch_routing_clustering():
     router.feedback_batch(feedbacks)
     
     # Check parameters updated
-    alpha, beta = storage.get_tool_params(ctx_0, tool_0)
+    alpha, beta = storage.get_candidate_params(ctx_0, tool_0)
     assert alpha > 1.0
 
 
@@ -262,16 +262,16 @@ async def test_async_router_batch_routing():
     router.priors = {"tool_a": (10.0, 2.0), "tool_b": (1.0, 10.0)}
     
     contexts = ["hello world", "style clean up"]
-    candidate_tools = ["tool_a", "tool_b"]
+    candidates = ["tool_a", "tool_b"]
     
-    choices = await router.aroute_batch(contexts, candidate_tools)
+    choices = await router.aroute_batch(contexts, candidates)
     assert len(choices) == 2
     
-    traces = await router.aroute_batch_with_trace(contexts, candidate_tools)
+    traces = await router.aroute_batch_with_trace(contexts, candidates)
     assert len(traces) == 2
     
     feedbacks = [
         {"trace_id": traces[0][1], "success": True},
-        {"context_text": "style clean up", "tool_name": "tool_b", "success": False},
+        {"context_text": "style clean up", "candidate_name": "tool_b", "success": False},
     ]
     await router.afeedback_batch(feedbacks)

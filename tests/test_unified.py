@@ -58,11 +58,11 @@ def test_flexible_parameters_routing_sync():
     router = BayesianRouter(storage_backend="memory")
 
     # Scenario A: Tool routing with old parameter names
-    chosen_tool = router.route(
+    chosen_candidate = router.route(
         context_text="Fetch user profile from PostgreSQL",
-        candidate_tools=["sql_tool", "vector_tool", "graphql_tool"],
+        candidates=["sql_tool", "vector_tool", "graphql_tool"],
     )
-    assert chosen_tool in ["sql_tool", "vector_tool", "graphql_tool"]
+    assert chosen_candidate in ["sql_tool", "vector_tool", "graphql_tool"]
 
     # Scenario B: Skill routing with new parameter names
     chosen_skill = router.route(
@@ -81,13 +81,13 @@ def test_flexible_parameters_routing_sync():
 
     # Feedback with aliases: context_key, and candidate_name / skill_name / candidate
     router.feedback(context_key="Test query key", candidate_name=tool, success=True)
-    router.feedback(context_key="Test query key", skill_name=tool, reward=1.0)
-    router.feedback(context_key="Test query key", candidate=tool, success=True)
+    router.feedback(context_key="Test query key", candidate_name=tool, reward=1.0)
+    router.feedback(context_key="Test query key", candidate_name=tool, success=True)
 
     # Beliefs retrieval with aliases
-    a1, b1 = router.get_tool_beliefs(context_key="Test query key", candidate_name=tool)
-    a2, b2 = router.get_tool_beliefs(context_key="Test query key", skill_name=tool)
-    a3, b3 = router.get_tool_beliefs(context_key="Test query key", candidate=tool)
+    a1, b1 = router.get_candidate_beliefs(context_key="Test query key", candidate_name=tool)
+    a2, b2 = router.get_candidate_beliefs(context_key="Test query key", candidate_name=tool)
+    a3, b3 = router.get_candidate_beliefs(context_key="Test query key", candidate_name=tool)
     assert a1 == a2 == a3
     assert b1 == b2 == b3
 
@@ -111,11 +111,11 @@ async def test_flexible_parameters_routing_async():
     assert trace is not None
 
     # afeedback with aliases
-    await router.afeedback(context_key="Build a Next.js application", skill_name=skill, success=True)
-    await router.afeedback(context_key="Build a Next.js application", candidate=skill, reward=1.0)
+    await router.afeedback(context_key="Build a Next.js application", candidate_name=skill, success=True)
+    await router.afeedback(context_key="Build a Next.js application", candidate_name=skill, reward=1.0)
 
-    # aget_tool_beliefs with aliases
-    a, b = await router.aget_tool_beliefs(context_key="Build a Next.js application", candidate_name=skill)
+    # aget_candidate_beliefs with aliases
+    a, b = await router.aget_candidate_beliefs(context_key="Build a Next.js application", candidate_name=skill)
     assert a >= 1.0
     assert b >= 1.0
 

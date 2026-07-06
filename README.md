@@ -2,13 +2,13 @@
   <img src="assets/logo.png" alt="BayesBrain Logo" width="400">
 </p>
 
-# BayesBrain: Dynamic Tool & Skill Routing via Bayesian Bandits
+# BayesBrain: Dynamic Candidate Routing via Bayesian Bandits
 
-In multi-agent systems, a supervisor agent often needs to decide which specialized sub-agent, API tool, or prompt workflow (skill) to invoke to solve a specific user task. Traditionally, this is done using hardcoded heuristics, prompt engineering, or raw LLM classification logits. None of these handle real-time uncertainty or silent failures well.
+In multi-agent systems, a supervisor agent often needs to decide which specialized sub-agent, API candidate, or prompt workflow (skill) to invoke to solve a specific user task. Traditionally, this is done using hardcoded heuristics, prompt engineering, or raw LLM classification logits. None of these handle real-time uncertainty or silent failures well.
 
-**BayesBrain** treats both tool and skill routing as a **Contextual Multi-Armed Bandit** using **Thompson Sampling** (or **Upper Confidence Bound**) with exact conjugate updates. It dynamically learns the most reliable tool or prompt candidate under semantic context clusters, adapting in real time to API failures, silent prompt hallucinations, or changing environment dynamics.
+**BayesBrain** treats both candidate and skill routing as a **Contextual Multi-Armed Bandit** using **Thompson Sampling** (or **Upper Confidence Bound**) with exact conjugate updates. It dynamically learns the most reliable candidate or prompt candidate under semantic context clusters, adapting in real time to API failures, silent prompt hallucinations, or changing environment dynamics.
 
-* **Tools (The Hands)**: Deterministic, discrete, and input-output bound (e.g. SQL queries, API hits, or running code).
+* **Candidates (The Hands)**: Deterministic, discrete, and input-output bound (e.g. SQL queries, API hits, or running code).
 * **Skills (The Cognitive Engines)**: Heuristic, prompt-heavy, and workflow-bound (e.g. a specialized system prompt, custom Standard Operating Procedure, or chain-of-thought routing loop). Since skills fail silently rather than throwing errors, posterior-guided Bayesian routing is vital for mapping and selecting the most reliable prompt variant over time.
 
 ---
@@ -18,13 +18,13 @@ In multi-agent systems, a supervisor agent often needs to decide which specializ
 To prevent runtime latency, BayesBrain avoids heavy Markov Chain Monte Carlo (MCMC) sampling (e.g., PyMC or Stan). Instead, it uses exact closed-form updates and supports two main mathematical modes: **Context Clustering** (Beta-Binomial) and **Linear Contextual Bandits** (LinTS / LinUCB).
 
 ### 1. Context Clustering Mode (Beta-Binomial Conjugate Pair)
-Each tool $i$ in a context cluster is modeled as a Beta distribution representing the belief of its success probability:
+Each candidate $i$ in a context cluster is modeled as a Beta distribution representing the belief of its success probability:
 
 1. **Belief Representation**: $\theta_i \sim \text{Beta}(\alpha_i, \beta_i)$.
 2. **Prior (Initial State)**: $\alpha_i = 1.0, \beta_i = 1.0$ (Uniform flat prior representing total uncertainty).
-3. **Thompson Sampling**: For each candidate tool, sample a success probability:
+3. **Thompson Sampling**: For each candidate candidate, sample a success probability:
    $$\theta_i \sim \text{Beta}(\alpha_i, \beta_i)$$
-   Select the tool with the highest sampled probability:
+   Select the candidate with the highest sampled probability:
    $$i^* = \arg\max_{i} \theta_i$$
 4. **Posterior Update (Telemetry)**:
    - **Success**: $\alpha_i \leftarrow \alpha_i + \text{reward}$
@@ -42,13 +42,13 @@ Both parameters are strictly clamped to a lower-bound of `1.0` to prevent the di
 ### 2. Linear Contextual Bandits Mode (LinTS & LinUCB)
 Instead of partitioning tasks into discrete clusters, the linear modes learn a linear relationship between the continuous task embedding space and the expected reward. Let the text embedding vector be $x \in \mathbb{R}^d$. We augment it with a bias term $x' = [x, 1.0]$ to learn prior success rates as linear offsets.
 
-* **Linear Thompson Sampling (LinTS)**: Models the success probability parameter $\theta_a$ for tool $a$ as a linear combination of features, $\theta_a = x'^T w_a$, where weights $w_a$ are sampled from the posterior distribution $\mathcal{N}(\hat{w}_a, v^2 B_a^{-1})$.
-* **Linear UCB (LinUCB)**: Selects the tool maximizing the upper confidence bound of the expected reward:
+* **Linear Thompson Sampling (LinTS)**: Models the success probability parameter $\theta_a$ for candidate $a$ as a linear combination of features, $\theta_a = x'^T w_a$, where weights $w_a$ are sampled from the posterior distribution $\mathcal{N}(\hat{w}_a, v^2 B_a^{-1})$.
+* **Linear UCB (LinUCB)**: Selects the candidate maximizing the upper confidence bound of the expected reward:
   $$a^* = \arg\max_a \left(x'^T \hat{w}_a + \alpha \sqrt{x'^T B_a^{-1} x'}\right)$$
   where $\hat{w}_a$ is the ridge regression estimate, $B_a$ is the precision matrix, and $\alpha$ (or $v$) is the exploration weight.
 * **L2 Regularization ($\lambda$)**: Performs ridge regression shrinkage on parameters.
 * **Diagonal Covariance Approximation**: Optional diagonal approximation ($O(d)$ runtime/storage) to avoid full matrix inversion ($O(d^3)$) during high-throughput execution.
-* **Shared-Parameter (Hybrid) Contextual Bandits**: Maps the task context $x_c$ and the tool's embedding $t_a$ into a single joint feature space, $x_{\text{augmented}} = [x_c, t_a, 1.0]$, and maintains a single unified weight vector $w \in \mathbb{R}^{d_{ctx} + d_{tool} + 1}$ across all tools. This eliminates disjoint parameter spaces and enables zero-shot generalization.
+* **Shared-Parameter (Hybrid) Contextual Bandits**: Maps the task context $x_c$ and the candidate's embedding $t_a$ into a single joint feature space, $x_{\text{augmented}} = [x_c, t_a, 1.0]$, and maintains a single unified weight vector $w \in \mathbb{R}^{d_{ctx} + d_{candidate} + 1}$ across all candidates. This eliminates disjoint parameter spaces and enables zero-shot generalization.
 
 ---
 
@@ -63,14 +63,14 @@ BayesBrain is decoupled from your execution layer, acting as a lightweight inter
                  [ Vector Index / Embedder ]
                               │ (Retrieve Context Key)
                               ▼
-                  [ Bayesian Tool Router ]
+                  [ Bayesian Candidate Router ]
                    ├─ Thompson Sampling / UCB
                    ├─ Fallback Key Hashing
                    └─ Fetch (α, β) or (B_a, f_a)
                               │
             ┌────────────────┴────────────────┐
             ▼                                 ▼
-     [ Selected Tool A ]               [ Selected Tool B ]
+     [ Selected Candidate A ]               [ Selected Candidate B ]
             │                                 │
             └────────────────┬────────────────┘
                              ▼
@@ -109,7 +109,7 @@ For advanced features, ensure the following database dependencies are satisfied:
 
 ### Synchronous API
 
-By supporting both Tools and Skills, `bayes_brain` manages routing uncertainty under a single unified class:
+By supporting both Candidates and Skills, `bayes_brain` manages routing uncertainty under a single unified class:
 
 ```python
 from bayes_brain import BayesianRouter
@@ -124,17 +124,17 @@ router = BayesianRouter(
     decay_factor=0.95
 )
 
-# Scenario A: Tool Routing (deterministic, input-output bound)
-chosen_tool = router.route(
+# Scenario A: Candidate Routing (deterministic, input-output bound)
+chosen_candidate = router.route(
     context_key="Fetch user profile from PostgreSQL", 
     candidates=["sql_tool", "vector_tool", "graphql_tool"]
 )
-print(f"Routed to tool: {chosen_tool}")
+print(f"Routed to candidate: {chosen_candidate}")
 
 # Provide feedback
 router.feedback(
     context_key="Fetch user profile from PostgreSQL",
-    candidate=chosen_tool,
+    candidate=chosen_candidate,
     success=True
 )
 
@@ -229,24 +229,24 @@ router = BayesianRouter(
 ```
 
 ### 🤝 Shared-Parameter (Hybrid) Contextual Bandits
-For setups where you want to generalize learning across tools (e.g., in a cold-start situation where a new tool is introduced), BayesBrain implements a **Shared-Parameter (Hybrid) Contextual Bandit**.
+For setups where you want to generalize learning across candidates (e.g., in a cold-start situation where a new candidate is introduced), BayesBrain implements a **Shared-Parameter (Hybrid) Contextual Bandit**.
 
-Instead of maintaining disjoint parameter matrices for each individual tool, the hybrid mode learns a single unified parameter set $w \in \mathbb{R}^{d_{ctx} + d_{tool} + 1}$ stored under a shared database key (`__shared_hybrid__`). For each routing decision:
-1. Task context $x_c$ and candidate tool embeddings $t_a$ are resolved.
+Instead of maintaining disjoint parameter matrices for each individual candidate, the hybrid mode learns a single unified parameter set $w \in \mathbb{R}^{d_{ctx} + d_{candidate} + 1}$ stored under a shared database key (`__shared_hybrid__`). For each routing decision:
+1. Task context $x_c$ and candidate candidate embeddings $t_a$ are resolved.
 2. The router builds an augmented feature vector: $x_{\text{augmented}} = [x_c, t_a, 1.0]$.
 3. The routing score is computed by taking the dot product of $x_{\text{augmented}}$ with the unified shared weight vector (sampled from the posterior in LinTS, or the ridge regression estimate plus exploration bonus in LinUCB).
 
 #### Enabling Hybrid Mode:
 ```python
-# Define or resolve embeddings for your tools
-tool_embeddings = {
+# Define or resolve embeddings for your candidates
+candidate_embeddings = {
     "math_calculator": [1.0, 0.0, 0.1],
     "python_interpreter": [0.9, 0.1, 0.2],
     "web_search": [0.0, 1.0, 0.0]
 }
 
 # Or provide string descriptions for dynamic metadata embedding
-tool_metadata = {
+candidate_metadata = {
     "math_calculator": "Execute mathematical equations and numeric calculations",
     "python_interpreter": "Run custom Python script blocks for data analysis",
     "web_search": "Search the web for real-time information"
@@ -257,32 +257,32 @@ router = BayesianRouter(
     embedder=embedder,
     mode="linucb",
     hybrid=True,                       # Enable hybrid mode
-    tool_embeddings=tool_embeddings,   # Direct embedding vectors (Optional)
-    tool_metadata=tool_metadata,       # String descriptions to embed dynamically (Optional)
+    candidate_embeddings=candidate_embeddings,   # Direct embedding vectors (Optional)
+    candidate_metadata=candidate_metadata,       # String descriptions to embed dynamically (Optional)
     diagonal_covariance=True
 )
 ```
 
-#### Dynamic Tool Embedding Resolution
-When `hybrid=True`, tool embeddings are resolved dynamically in order of preference:
-1. **Direct Vector Lookup**: Uses vectors provided in `tool_embeddings`.
-2. **Metadata Embedding**: Embeds string descriptions provided in `tool_metadata` using the active `ContextEmbedder` / `AsyncContextEmbedder`.
-3. **Fallback Embedding**: Embeds the tool's name (`tool_name`) as a fallback via the active embedder.
+#### Dynamic Candidate Embedding Resolution
+When `hybrid=True`, candidate embeddings are resolved dynamically in order of preference:
+1. **Direct Vector Lookup**: Uses vectors provided in `candidate_embeddings`.
+2. **Metadata Embedding**: Embeds string descriptions provided in `candidate_metadata` using the active `ContextEmbedder` / `AsyncContextEmbedder`.
+3. **Fallback Embedding**: Embeds the candidate's name (`candidate_name`) as a fallback via the active embedder.
 
 ### 📦 Batch/Bulk API Support
 Avoid the N-roundtrip database/network bottleneck when processing large telemetry bundles or task lists:
 
 ```python
 contexts = ["Compile source code", "Format file contents"]
-candidate_tools = ["compiler_tool", "linter_tool"]
+candidates = ["compiler_tool", "linter_tool"]
 
 # Batch Routing
-chosen_tools = router.route_batch(contexts, candidate_tools)
+chosen_candidates = router.route_batch(contexts, candidates)
 
 # Batch Feedback
 feedbacks = [
-    {"context_text": "Compile source code", "tool_name": "compiler_tool", "success": True, "reward": 1.0},
-    {"context_text": "Format file contents", "tool_name": "linter_tool", "success": False, "reward": 0.0}
+    {"context_text": "Compile source code", "candidate_name": "compiler_tool", "success": True, "reward": 1.0},
+    {"context_text": "Format file contents", "candidate_name": "linter_tool", "success": False, "reward": 0.0}
 ]
 router.feedback_batch(feedbacks)
 ```
@@ -298,7 +298,7 @@ router = BayesianRouter(
     secret_key="my-app-secure-hmac-key" # Auto-generates random 32-byte key if omitted
 )
 
-chosen_tool, trace_id = router.route_with_trace(context_text, candidate_tools)
+chosen_candidate, trace_id = router.route_with_trace(context_text, candidates)
 # trace_id is formatted as 'payload_b64..signature_hex'
 
 # Automatically validates signature before updating parameters; raises ValueError if tampered
@@ -342,7 +342,7 @@ When operating without an embedder, or if API embedder requests fail, the router
 
 ## Integrations & FastMCP Server
 
-Optimize tool/skill selection in Claude Code or other MCP hosts by registering a Meta-Tool to handle dynamic routing, alongside administrative tools to manage and monitor bandit beliefs.
+Optimize candidate/skill selection in Claude Code or other MCP hosts by registering a Meta-Candidate to handle dynamic routing, alongside administrative candidates to manage and monitor bandit beliefs.
 
 You can configure and expose these endpoints using [create_mcp_server](file:///Users/sam/Locals%20Only/bayes-brain/src/bayes_brain/mcp_server.py#L375):
 
@@ -353,25 +353,25 @@ from bayes_brain.mcp_server import create_mcp_server
 mcp = create_mcp_server(
     server_name="BayesBrain",
     db_path="mcp_bandit.db",
-    sub_tools=["local_pytest", "docker_sandbox", "fallback_api"]
+    candidates=["local_pytest", "docker_sandbox", "fallback_api"]
 )
 ```
 
-### Registered Tools, Skills & Resources
+### Registered Candidates, Skills & Resources
 
 | Endpoint | Type | Description |
 | :--- | :--- | :--- |
-| `execute_adaptive_action` | `Tool` | Thompson sampling/UCB routes incoming tasks to the best sub-tool/skill candidate and automatically applies execution feedback. |
-| `get_tool_beliefs` | `Tool` | Retrieve current posterior $\alpha$ and $\beta$ beliefs for all candidate tools/skills under a given context (resolving context-specific priors). |
-| `reset_beliefs` | `Tool` | Reset the beliefs back to the default prior for a tool/skill under a context. |
+| `execute_adaptive_action` | `Tool` | Thompson sampling/UCB routes incoming tasks to the best sub-candidate/skill candidate and automatically applies execution feedback. |
+| `get_candidate_beliefs` | `Tool` | Retrieve current posterior $\alpha$ and $\beta$ beliefs for all candidate candidates/skills under a given context (resolving context-specific priors). |
+| `reset_candidate_beliefs` | `Tool` | Reset the beliefs back to the default prior for a candidate/skill under a context. |
 | `bayes://metrics` | `Resource` | Exposes a Markdown Dashboard with context clusters, expected success rates, and raw telemetry metrics. |
 
 ### Visual Diagnostics on the Metrics Dashboard
 The `bayes://metrics` dashboard exposes rich, live visuals to monitor routing decisions and distributions in real time:
-* **ASCII Sparklines**: Displays inline unicode block characters (e.g. ` ▂▃▅▇█▆▄▂`) representing the shape of the $\text{Beta}(\alpha, \beta)$ probability distribution next to each tool/skill in the context clusters table.
-* **Beta PDF SVG Charts**: Renders custom inline SVG charts mapping probability density curves for all candidate tools/skills under each context cluster (utilizing SciPy's Beta stats model), complete with colors, legends, labels, and coordinate grids.
-* **Recent Executions Log**: Lists the 20 most recent routing executions chronologically, detailing the Trace ID, Timestamp, Context Cluster, Selected Tool/Skill, and Reward feedback outcome.
-* **History MA10 SVG Line Chart**: Renders a chronological line plot tracking the running moving average success rates of candidate tools/skills over time.
+* **ASCII Sparklines**: Displays inline unicode block characters (e.g. ` ▂▃▅▇█▆▄▂`) representing the shape of the $\text{Beta}(\alpha, \beta)$ probability distribution next to each candidate/skill in the context clusters table.
+* **Beta PDF SVG Charts**: Renders custom inline SVG charts mapping probability density curves for all candidate candidates/skills under each context cluster (utilizing SciPy's Beta stats model), complete with colors, legends, labels, and coordinate grids.
+* **Recent Executions Log**: Lists the 20 most recent routing executions chronologically, detailing the Trace ID, Timestamp, Context Cluster, Selected Candidate/Skill, and Reward feedback outcome.
+* **History MA10 SVG Line Chart**: Renders a chronological line plot tracking the running moving average success rates of candidate candidates/skills over time.
 
 ---
 

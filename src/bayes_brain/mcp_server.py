@@ -35,38 +35,38 @@ async def _get_all_beliefs(
 
     if isinstance(storage, AsyncInMemoryStorage):
         async with storage._lock:
-            for (ctx_key, tool), (alpha, beta) in storage._data.items():
+            for (ctx_key, candidate), (alpha, beta) in storage._data.items():
                 if ctx_key not in beliefs:
                     beliefs[ctx_key] = {}
-                beliefs[ctx_key][tool] = {"alpha": alpha, "beta": beta}
+                beliefs[ctx_key][candidate] = {"alpha": alpha, "beta": beta}
     elif isinstance(storage, InMemoryStorage):
         with storage._lock:
-            for (ctx_key, tool), (alpha, beta) in storage._data.items():
+            for (ctx_key, candidate), (alpha, beta) in storage._data.items():
                 if ctx_key not in beliefs:
                     beliefs[ctx_key] = {}
-                beliefs[ctx_key][tool] = {"alpha": alpha, "beta": beta}
+                beliefs[ctx_key][candidate] = {"alpha": alpha, "beta": beta}
 
     elif isinstance(storage, AsyncSQLiteStorage):
         import aiosqlite
         async with aiosqlite.connect(storage.db_path) as conn:
             try:
-                async with conn.execute("SELECT context_key, tool_name, alpha, beta FROM tool_params") as cursor:
+                async with conn.execute("SELECT context_key, candidate_name, alpha, beta FROM candidate_params") as cursor:
                     async for row in cursor:
-                        ctx_key, tool, alpha, beta = row
+                        ctx_key, candidate, alpha, beta = row
                         if ctx_key not in beliefs:
                             beliefs[ctx_key] = {}
-                        beliefs[ctx_key][tool] = {"alpha": float(alpha), "beta": float(beta)}
+                        beliefs[ctx_key][candidate] = {"alpha": float(alpha), "beta": float(beta)}
             except Exception:
                 pass
     elif isinstance(storage, SQLiteStorage):
         conn = sqlite3.connect(storage.db_path)
         try:
             cursor = conn.cursor()
-            cursor.execute("SELECT context_key, tool_name, alpha, beta FROM tool_params")
-            for ctx_key, tool, alpha, beta in cursor.fetchall():
+            cursor.execute("SELECT context_key, candidate_name, alpha, beta FROM candidate_params")
+            for ctx_key, candidate, alpha, beta in cursor.fetchall():
                 if ctx_key not in beliefs:
                     beliefs[ctx_key] = {}
-                beliefs[ctx_key][tool] = {"alpha": float(alpha), "beta": float(beta)}
+                beliefs[ctx_key][candidate] = {"alpha": float(alpha), "beta": float(beta)}
         except Exception:
             pass
         finally:
@@ -87,12 +87,12 @@ async def _get_all_beliefs(
                         field_str = field.decode("utf-8") if isinstance(field, bytes) else str(field)
                         val_str = val.decode("utf-8") if isinstance(val, bytes) else str(val)
                         if ":" in field_str:
-                            tool, param_type = field_str.split(":", 1)
+                            candidate, param_type = field_str.split(":", 1)
                             if ctx_candidate not in beliefs:
                                 beliefs[ctx_candidate] = {}
-                            if tool not in beliefs[ctx_candidate]:
-                                beliefs[ctx_candidate][tool] = {}
-                            beliefs[ctx_candidate][tool][param_type] = float(val_str)
+                            if candidate not in beliefs[ctx_candidate]:
+                                beliefs[ctx_candidate][candidate] = {}
+                            beliefs[ctx_candidate][candidate][param_type] = float(val_str)
         except Exception:
             pass
     elif isinstance(storage, RedisStorage):
@@ -110,19 +110,19 @@ async def _get_all_beliefs(
                         field_str = field.decode("utf-8") if isinstance(field, bytes) else str(field)
                         val_str = val.decode("utf-8") if isinstance(val, bytes) else str(val)
                         if ":" in field_str:
-                            tool, param_type = field_str.split(":", 1)
+                            candidate, param_type = field_str.split(":", 1)
                             if ctx_candidate not in beliefs:
                                 beliefs[ctx_candidate] = {}
-                            if tool not in beliefs[ctx_candidate]:
-                                beliefs[ctx_candidate][tool] = {}
-                            beliefs[ctx_candidate][tool][param_type] = float(val_str)
+                            if candidate not in beliefs[ctx_candidate]:
+                                beliefs[ctx_candidate][candidate] = {}
+                            beliefs[ctx_candidate][candidate][param_type] = float(val_str)
         except Exception:
             pass
 
     return beliefs
 
 
-def _get_tool_color(tool_name: str, index: int = 0) -> str:
+def _get_candidate_color(candidate_name: str, index: int = 0) -> str:
     colors = {
         "local_pytest": "#3b82f6",    # Blue
         "docker_sandbox": "#8b5cf6",  # Purple
@@ -130,8 +130,8 @@ def _get_tool_color(tool_name: str, index: int = 0) -> str:
         "tool1": "#10b981",           # Emerald Green
         "tool2": "#ec4899",           # Pink
     }
-    if tool_name in colors:
-        return colors[tool_name]
+    if candidate_name in colors:
+        return colors[candidate_name]
     default_colors = ["#10b981", "#ec4899", "#f59e0b", "#06b6d4", "#f43f5e", "#14b8a6"]
     return default_colors[index % len(default_colors)]
 
@@ -158,21 +158,21 @@ def generate_ascii_sparkline(alpha: float, beta: float, width: int = 15) -> str:
         return " " * width
 
 
-def generate_beta_pdf_svg(tools_params: dict, width: int = 600, height: int = 250) -> str:
+def generate_beta_pdf_svg(candidates_params: dict, width: int = 600, height: int = 250) -> str:
     """
-    Generate SVG plotting the Beta density curves for candidate tools.
+    Generate SVG plotting the Beta density curves for candidate candidates.
     """
     try:
         x_vals = np.linspace(0.0, 1.0, 101)
         curves = {}
         max_y = 1.0
         
-        for idx, (tool_name, params) in enumerate(tools_params.items()):
+        for idx, (candidate_name, params) in enumerate(candidates_params.items()):
             alpha = params.get("alpha", 1.0)
             beta = params.get("beta", 1.0)
             y_vals = scipy_beta.pdf(x_vals, alpha, beta)
             y_vals = np.nan_to_num(y_vals, nan=0.0, posinf=100.0, neginf=0.0)
-            curves[tool_name] = y_vals
+            curves[candidate_name] = y_vals
             max_y = max(max_y, np.max(y_vals))
 
         padding_top = 20
@@ -216,8 +216,8 @@ def generate_beta_pdf_svg(tools_params: dict, width: int = 600, height: int = 25
         )
 
         # Plot curves
-        for idx, (tool_name, y_vals) in enumerate(curves.items()):
-            tool_color = _get_tool_color(tool_name, idx)
+        for idx, (candidate_name, y_vals) in enumerate(curves.items()):
+            candidate_color = _get_candidate_color(candidate_name, idx)
             points = []
             for x, y in zip(x_vals, y_vals):
                 px = padding_left + x * chart_width
@@ -226,23 +226,23 @@ def generate_beta_pdf_svg(tools_params: dict, width: int = 600, height: int = 25
                 
             path_d = "M " + " L ".join(points)
             svg_elements.append(
-                f'<path d="{path_d}" fill="none" stroke="{tool_color}" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" />'
+                f'<path d="{path_d}" fill="none" stroke="{candidate_color}" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" />'
             )
 
         # Legend
         legend_left = padding_left + chart_width + 16
-        for idx, (tool_name, params) in enumerate(tools_params.items()):
-            tool_color = _get_tool_color(tool_name, idx)
+        for idx, (candidate_name, params) in enumerate(candidates_params.items()):
+            candidate_color = _get_candidate_color(candidate_name, idx)
             alpha = params.get("alpha", 1.0)
             beta = params.get("beta", 1.0)
             mean = alpha / (alpha + beta) if (alpha + beta) > 0 else 0.5
             y_pos = padding_top + 16 + idx * 28
             
             svg_elements.append(
-                f'<rect x="{legend_left}" y="{y_pos}" width="12" height="12" rx="3" fill="{tool_color}" />'
+                f'<rect x="{legend_left}" y="{y_pos}" width="12" height="12" rx="3" fill="{candidate_color}" />'
             )
             svg_elements.append(
-                f'<text x="{legend_left + 18}" y="{y_pos + 10}" fill="#e5e7eb" font-size="11" font-weight="bold">{tool_name}</text>'
+                f'<text x="{legend_left + 18}" y="{y_pos + 10}" fill="#e5e7eb" font-size="11" font-weight="bold">{candidate_name}</text>'
             )
             svg_elements.append(
                 f'<text x="{legend_left + 18}" y="{y_pos + 22}" fill="#9ca3af" font-size="9">Beta({alpha:.1f}, {beta:.1f}) | μ={mean*100:.1f}%</text>'
@@ -254,23 +254,23 @@ def generate_beta_pdf_svg(tools_params: dict, width: int = 600, height: int = 25
         return f'<svg viewBox="0 0 {width} {height}" width="100%" height="{height}" xmlns="http://www.w3.org/2000/svg" style="background-color: #111827;"><text x="{width/2}" y="{height/2}" fill="#ef4444" text-anchor="middle">Error rendering SVG: {str(e)}</text></svg>'
 
 
-def generate_history_svg(logs: list, available_tools: list, width: int = 600, height: int = 250) -> str:
+def generate_history_svg(logs: list, available_candidates: list, width: int = 600, height: int = 250) -> str:
     """
     Generate SVG plotting the moving average success rate over time.
     """
     try:
-        tool_rewards = {t: [] for t in available_tools}
+        candidate_rewards = {t: [] for t in available_candidates}
         history_points = []
         
         for idx, log in enumerate(logs):
-            t_name = log["tool_name"]
+            c_name = log["candidate_name"]
             reward = log["reward"]
-            if t_name in tool_rewards:
+            if c_name in candidate_rewards:
                 if reward is not None:
-                    tool_rewards[t_name].append(reward)
+                    candidate_rewards[c_name].append(reward)
                 point_avgs = {}
-                for t in available_tools:
-                    rewards = tool_rewards[t]
+                for t in available_candidates:
+                    rewards = candidate_rewards[t]
                     if len(rewards) > 0:
                         window = rewards[-10:]
                         point_avgs[t] = sum(window) / len(window)
@@ -331,11 +331,11 @@ def generate_history_svg(logs: list, available_tools: list, width: int = 600, he
         )
 
         # Plot lines
-        for idx, tool_name in enumerate(available_tools):
-            tool_color = _get_tool_color(tool_name, idx)
+        for idx, candidate_name in enumerate(available_candidates):
+            candidate_color = _get_candidate_color(candidate_name, idx)
             points = []
             for run_idx, pt in enumerate(history_points):
-                val = pt.get(tool_name)
+                val = pt.get(candidate_name)
                 if val is not None:
                     x_pos = padding_left + (run_idx / (num_runs - 1)) * chart_width
                     y_pos = padding_top + chart_height - val * chart_height
@@ -344,28 +344,28 @@ def generate_history_svg(logs: list, available_tools: list, width: int = 600, he
             if len(points) >= 2:
                 path_d = "M " + " L ".join(points)
                 svg_elements.append(
-                    f'<path d="{path_d}" fill="none" stroke="{tool_color}" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" />'
+                    f'<path d="{path_d}" fill="none" stroke="{candidate_color}" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" />'
                 )
                 for pt_str in points:
                     cx, cy = pt_str.split(",")
                     svg_elements.append(
-                        f'<circle cx="{cx}" cy="{cy}" r="3.5" fill="#ffffff" stroke="{tool_color}" stroke-width="1.5" />'
+                        f'<circle cx="{cx}" cy="{cy}" r="3.5" fill="#ffffff" stroke="{candidate_color}" stroke-width="1.5" />'
                     )
 
         # Legend
         legend_left = padding_left + chart_width + 16
-        for idx, tool_name in enumerate(available_tools):
-            tool_color = _get_tool_color(tool_name, idx)
-            rewards = tool_rewards[tool_name]
+        for idx, candidate_name in enumerate(available_candidates):
+            candidate_color = _get_candidate_color(candidate_name, idx)
+            rewards = candidate_rewards[candidate_name]
             total_selections = len(rewards)
             current_avg = sum(rewards[-10:]) / len(rewards[-10:]) if len(rewards[-10:]) > 0 else 0.0
             y_pos = padding_top + 16 + idx * 28
             
             svg_elements.append(
-                f'<rect x="{legend_left}" y="{y_pos}" width="12" height="12" rx="3" fill="{tool_color}" />'
+                f'<rect x="{legend_left}" y="{y_pos}" width="12" height="12" rx="3" fill="{candidate_color}" />'
             )
             svg_elements.append(
-                f'<text x="{legend_left + 18}" y="{y_pos + 10}" fill="#e5e7eb" font-size="11" font-weight="bold">{tool_name}</text>'
+                f'<text x="{legend_left + 18}" y="{y_pos + 10}" fill="#e5e7eb" font-size="11" font-weight="bold">{candidate_name}</text>'
             )
             svg_elements.append(
                 f'<text x="{legend_left + 18}" y="{y_pos + 22}" fill="#9ca3af" font-size="9">MA(10): {current_avg*100:.1f}% | Total: {total_selections}</text>'
@@ -380,8 +380,8 @@ def generate_history_svg(logs: list, available_tools: list, width: int = 600, he
 def create_mcp_server(
     server_name: str = "BayesBrain",
     db_path: str = "mcp_bandit.db",
-    sub_tools: Optional[List[str]] = None,
-    tool_executor: Optional[Callable[[str, str], Union[Tuple[str, bool], str]]] = None,
+    candidates: Optional[List[str]] = None,
+    candidate_executor: Optional[Callable[[str, str], Union[Tuple[str, bool], str]]] = None,
     priors: Optional[Dict[str, Tuple[float, float]]] = None,
     contextual_priors: Optional[List[Dict[str, Any]]] = None,
 ) -> FastMCP:
@@ -390,11 +390,11 @@ def create_mcp_server(
 
     Args:
         server_name: The display name of the FastMCP server.
-        db_path: SQLite database path to store tool/skill statistics.
-        sub_tools: A list of candidate sub-tools/skills the router can dynamically select.
-        tool_executor: A callable taking (selected_tool, task_description) returning
+        db_path: SQLite database path to store candidate/skill statistics.
+        candidates: A list of candidate sub-candidates/skills the router can dynamically select.
+        candidate_executor: A callable taking (selected_candidate, task_description) returning
                        either (output, success_bool) or just output (which defaults to success).
-        priors: Preseeded alpha/beta priors for tools/skills to mitigate cold start.
+        priors: Preseeded alpha/beta priors for candidates/skills to mitigate cold start.
         contextual_priors: List of context-specific prior rules matching regex or embedding clusters.
     """
     mcp = FastMCP(server_name)
@@ -407,26 +407,26 @@ def create_mcp_server(
         contextual_priors=contextual_priors,
     )
     
-    available_tools = sub_tools or ["local_pytest", "docker_sandbox", "fallback_api"]
+    available_candidates = candidates or ["local_pytest", "docker_sandbox", "fallback_api"]
 
-    async def run_tool_logic(tool_name: str, task: str) -> Tuple[str, bool]:
-        if tool_executor:
+    async def run_candidate_logic(candidate_name: str, task: str) -> Tuple[str, bool]:
+        if candidate_executor:
             import inspect
-            if inspect.iscoroutinefunction(tool_executor):
-                res = await tool_executor(tool_name, task)
+            if inspect.iscoroutinefunction(candidate_executor):
+                res = await candidate_executor(candidate_name, task)
             else:
-                res = tool_executor(tool_name, task)
+                res = candidate_executor(candidate_name, task)
 
             if isinstance(res, tuple):
                 return str(res[0]), bool(res[1])
             return str(res), True
 
         # Default fallback simulator for demonstrations
-        if tool_name == "local_pytest":
+        if candidate_name == "local_pytest":
             # Simulate failure on task requests with styling checks
             success = "style" not in task.lower()
             return f"Pytest execution: {'PASSED' if success else 'FAILED'}", success
-        elif tool_name == "docker_sandbox":
+        elif candidate_name == "docker_sandbox":
             return "Docker sandbox execution completed successfully.", True
         else:
             return "Fallback API request dispatched and processed.", True
@@ -434,31 +434,31 @@ def create_mcp_server(
     @mcp.tool()
     async def execute_adaptive_action(task_description: str) -> str:
         """
-        Dynamically routes task execution to the most reliable sub-tool/skill candidate.
+        Dynamically routes task execution to the most reliable sub-candidate/skill candidate.
 
         Args:
             task_description: A description of the code or integration task to execute.
         """
-        # Thompson sampling selects the tool
-        chosen_tool, trace_id = await router.aroute_with_trace(
+        # Thompson sampling selects the candidate
+        chosen_candidate, trace_id = await router.aroute_with_trace(
             context_text=task_description,
-            candidate_tools=available_tools
+            candidates=available_candidates
         )
 
         try:
-            result, success = await run_tool_logic(chosen_tool, task_description)
+            result, success = await run_candidate_logic(chosen_candidate, task_description)
         except Exception as e:
             result, success = f"Adaptive execution encountered an error: {str(e)}", False
 
         # Submit execution feedback asynchronously
         await router.afeedback_by_trace(trace_id=trace_id, success=success)
 
-        return f"Selected Tool: {chosen_tool}\nExecution Output:\n{result}"
+        return f"Selected Candidate: {chosen_candidate}\nExecution Output:\n{result}"
 
     @mcp.tool()
-    async def get_tool_beliefs(context: str) -> str:
+    async def get_candidate_beliefs(context: str) -> str:
         """
-        Retrieve the current posterior alpha and beta beliefs for all tools/skills under a given context.
+        Retrieve the current posterior alpha and beta beliefs for all candidates/skills under a given context.
 
         Args:
             context: The context text to look up beliefs for.
@@ -482,33 +482,33 @@ def create_mcp_server(
             context_key = router._hash_context_text(context)
 
         beliefs = {}
-        for tool_name in available_tools:
-            alpha, beta = await router.storage.get_tool_params(context_key, tool_name)
+        for candidate_name in available_candidates:
+            alpha, beta = await router.storage.get_candidate_params(context_key, candidate_name)
             if alpha == 1.0 and beta == 1.0:
                 if hasattr(router, "get_prior"):
                     import inspect
                     if inspect.iscoroutinefunction(router.get_prior):
-                        alpha, beta = await router.get_prior(context, tool_name)
+                        alpha, beta = await router.get_prior(context, candidate_name)
                     else:
-                        alpha, beta = router.get_prior(context, tool_name)
-                elif tool_name in router.priors:
-                    alpha, beta = router.priors[tool_name]
-            beliefs[tool_name] = {"alpha": alpha, "beta": beta}
+                        alpha, beta = router.get_prior(context, candidate_name)
+                elif candidate_name in router.priors:
+                    alpha, beta = router.priors[candidate_name]
+            beliefs[candidate_name] = {"alpha": alpha, "beta": beta}
 
         return json.dumps(beliefs, indent=2)
 
     @mcp.tool()
-    async def reset_beliefs(context: str, tool: str) -> str:
+    async def reset_candidate_beliefs(context: str, candidate: str) -> str:
         """
         Reset the posterior alpha and beta beliefs back to the default prior (1.0, 1.0)
-        for a specific tool/skill under a given context.
+        for a specific candidate/skill under a given context.
 
         Args:
             context: The context text to reset beliefs for.
-            tool: The specific tool/skill name to reset beliefs for.
+            candidate: The specific candidate/skill name to reset beliefs for.
         """
-        if tool not in available_tools:
-            return f"Error: Tool '{tool}' is not in the list of available tools ({available_tools})."
+        if candidate not in available_candidates:
+            return f"Error: Candidate '{candidate}' is not in the list of available candidates ({available_candidates})."
 
         # Resolve the context key
         context_key = None
@@ -528,8 +528,8 @@ def create_mcp_server(
         if context_key is None:
             context_key = router._hash_context_text(context)
 
-        await router.storage.update_tool_params(context_key, tool, 1.0, 1.0)
-        return f"Beliefs for tool '{tool}' under context key '{context_key}' have been reset to (1.0, 1.0)."
+        await router.storage.update_candidate_params(context_key, candidate, 1.0, 1.0)
+        return f"Beliefs for candidate '{candidate}' under context key '{context_key}' have been reset to (1.0, 1.0)."
 
     @mcp.resource("bayes://metrics")
     async def get_metrics() -> str:
@@ -554,29 +554,29 @@ def create_mcp_server(
             lines.append(f"**Total Context Clusters:** {len(all_beliefs)}")
             lines.append("")
 
-            # Build full beliefs including defaults/priors for all available tools
+            # Build full beliefs including defaults/priors for all available candidates
             full_beliefs = {}
             for ctx_key, tools_beliefs in all_beliefs.items():
                 full_beliefs[ctx_key] = {}
-                for t_name in available_tools:
-                    params = tools_beliefs.get(t_name, {"alpha": 1.0, "beta": 1.0})
-                    if params["alpha"] == 1.0 and params["beta"] == 1.0 and t_name in router.priors:
-                        params = {"alpha": router.priors[t_name][0], "beta": router.priors[t_name][1]}
-                    full_beliefs[ctx_key][t_name] = params
+                for c_name in available_candidates:
+                    params = tools_beliefs.get(c_name, {"alpha": 1.0, "beta": 1.0})
+                    if params["alpha"] == 1.0 and params["beta"] == 1.0 and c_name in router.priors:
+                        params = {"alpha": router.priors[c_name][0], "beta": router.priors[c_name][1]}
+                    full_beliefs[ctx_key][c_name] = params
 
             for ctx_key, tools_beliefs in full_beliefs.items():
                 lines.append(f"### Context Cluster: `{ctx_key}`")
                 lines.append("")
-                lines.append("| Tool | Alpha (Successes) | Beta (Failures) | Expected Success Rate | Belief Sparkline (0 to 1) |")
+                lines.append("| Candidate | Alpha (Successes) | Beta (Failures) | Expected Success Rate | Belief Sparkline (0 to 1) |")
                 lines.append("| :--- | :---: | :---: | :---: | :---: |")
 
-                for t_name, params in tools_beliefs.items():
+                for c_name, params in tools_beliefs.items():
                     alpha = params.get("alpha", 1.0)
                     beta = params.get("beta", 1.0)
                     total = alpha + beta
                     expected_rate = (alpha / total) * 100 if total > 0 else 50.0
                     sparkline = generate_ascii_sparkline(alpha, beta)
-                    lines.append(f"| {t_name} | {alpha:.2f} | {beta:.2f} | {expected_rate:.1f}% | `{sparkline}` |")
+                    lines.append(f"| {c_name} | {alpha:.2f} | {beta:.2f} | {expected_rate:.1f}% | `{sparkline}` |")
                 lines.append("")
                 
                 # Render SVG Beta density curve
@@ -594,40 +594,40 @@ def create_mcp_server(
         lines.append("")
 
         # Aggregate counts and success rates
-        select_counts = {t: 0 for t in available_tools}
-        feedback_counts = {t: 0 for t in available_tools}
-        rewards = {t: [] for t in available_tools}
+        select_counts = {t: 0 for t in available_candidates}
+        feedback_counts = {t: 0 for t in available_candidates}
+        rewards = {t: [] for t in available_candidates}
         
         for log in logs:
-            t_name = log["tool_name"]
+            c_name = log["candidate_name"]
             reward = log["reward"]
-            if t_name in select_counts:
-                select_counts[t_name] += 1
+            if c_name in select_counts:
+                select_counts[c_name] += 1
             if reward is not None:
-                if t_name in feedback_counts:
-                    feedback_counts[t_name] += 1
-                if t_name in rewards:
-                    rewards[t_name].append(reward)
+                if c_name in feedback_counts:
+                    feedback_counts[c_name] += 1
+                if c_name in rewards:
+                    rewards[c_name].append(reward)
 
-        lines.append("| Tool | Total Selections | Selection Frequency | Runs with Feedback | Overall Success Rate | Recent Success Rate (MA10) |")
+        lines.append("| Candidate | Total Selections | Selection Frequency | Runs with Feedback | Overall Success Rate | Recent Success Rate (MA10) |")
         lines.append("| :--- | :---: | :---: | :---: | :---: | :---: |")
-        for idx, t_name in enumerate(available_tools):
-            sel_cnt = select_counts[t_name]
+        for idx, c_name in enumerate(available_candidates):
+            sel_cnt = select_counts[c_name]
             sel_freq = (sel_cnt / total_selections * 100) if total_selections > 0 else 0.0
-            fb_cnt = feedback_counts[t_name]
-            r_list = rewards[t_name]
+            fb_cnt = feedback_counts[c_name]
+            r_list = rewards[c_name]
             overall_rate = (sum(r_list) / len(r_list) * 100) if len(r_list) > 0 else 0.0
             ma_list = r_list[-10:]
             recent_rate = (sum(ma_list) / len(ma_list) * 100) if len(ma_list) > 0 else 0.0
             
             recent_rate_str = f"{recent_rate:.1f}%" if len(ma_list) > 0 else "N/A"
             overall_rate_str = f"{overall_rate:.1f}%" if len(r_list) > 0 else "N/A"
-            lines.append(f"| {t_name} | {sel_cnt} | {sel_freq:.1f}% | {fb_cnt} | {overall_rate_str} | {recent_rate_str} |")
+            lines.append(f"| {c_name} | {sel_cnt} | {sel_freq:.1f}% | {fb_cnt} | {overall_rate_str} | {recent_rate_str} |")
         lines.append("")
 
         lines.append("### Moving Average Success Rate Over Time")
         lines.append('<div align="center">')
-        lines.append(generate_history_svg(logs, available_tools))
+        lines.append(generate_history_svg(logs, available_candidates))
         lines.append("</div>")
         lines.append("")
 
@@ -639,7 +639,7 @@ def create_mcp_server(
             lines.append("*No routing actions logged yet.*")
             lines.append("")
         else:
-            lines.append("| Trace ID | Timestamp (UTC) | Context Key | Selected Tool | Feedback Reward / Outcome |")
+            lines.append("| Trace ID | Timestamp (UTC) | Context Key | Selected Candidate | Feedback Reward / Outcome |")
             lines.append("| :--- | :--- | :--- | :--- | :--- |")
             for log in reversed(recent_logs):
                 tid = log["trace_id"]
@@ -647,7 +647,7 @@ def create_mcp_server(
                 ts = log["timestamp"]
                 ts_display = ts.split(".")[0].replace("T", " ") if "T" in ts else ts
                 ctx = log["context_key"]
-                tool = log["tool_name"]
+                candidate = log["candidate_name"]
                 rew = log["reward"]
                 if rew is None:
                     rew_display = "*Pending feedback*"
@@ -657,7 +657,7 @@ def create_mcp_server(
                     rew_display = "0.0 (Failure)"
                 else:
                     rew_display = f"{rew:.2f}"
-                lines.append(f"| `{tid_display}` | {ts_display} | `{ctx}` | `{tool}` | {rew_display} |")
+                lines.append(f"| `{tid_display}` | {ts_display} | `{ctx}` | `{candidate}` | {rew_display} |")
             lines.append("")
 
         if all_beliefs:

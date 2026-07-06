@@ -12,13 +12,13 @@ def test_in_memory_storage():
     storage = InMemoryStorage()
     
     # Defaults
-    alpha, beta = storage.get_tool_params("ctx_test", "tool_a")
+    alpha, beta = storage.get_candidate_params("ctx_test", "tool_a")
     assert alpha == 1.0
     assert beta == 1.0
 
     # Updates
-    storage.update_tool_params("ctx_test", "tool_a", 5.5, 4.2)
-    alpha, beta = storage.get_tool_params("ctx_test", "tool_a")
+    storage.update_candidate_params("ctx_test", "tool_a", 5.5, 4.2)
+    alpha, beta = storage.get_candidate_params("ctx_test", "tool_a")
     assert alpha == 5.5
     assert beta == 4.2
 
@@ -48,13 +48,13 @@ def test_sqlite_storage():
         storage = SQLiteStorage(db_path)
         
         # Test defaults
-        a, b = storage.get_tool_params("ctx_1", "tool_1")
+        a, b = storage.get_candidate_params("ctx_1", "tool_1")
         assert a == 1.0
         assert b == 1.0
 
         # Test updates
-        storage.update_tool_params("ctx_1", "tool_1", 10.0, 2.0)
-        a, b = storage.get_tool_params("ctx_1", "tool_1")
+        storage.update_candidate_params("ctx_1", "tool_1", 10.0, 2.0)
+        a, b = storage.get_candidate_params("ctx_1", "tool_1")
         assert a == 10.0
         assert b == 2.0
 
@@ -101,12 +101,12 @@ def test_redis_storage():
     storage = RedisStorage(mock_client, prefix="bayes_brain:")
 
     # Get params
-    a, b = storage.get_tool_params("ctx_1", "tool_1")
+    a, b = storage.get_candidate_params("ctx_1", "tool_1")
     assert a == 10.0
     assert b == 5.0
     
     # Update params
-    storage.update_tool_params("ctx_1", "tool_1", 12.0, 6.0)
+    storage.update_candidate_params("ctx_1", "tool_1", 12.0, 6.0)
     mock_client.hset.assert_called_with(
         "bayes_brain:ctx_1",
         mapping={"tool_1:alpha": "12.0", "tool_1:beta": "6.0"}
@@ -244,7 +244,7 @@ def test_storage_selection_logging():
     assert len(logs) == 1
     assert logs[0]["trace_id"] == "trace_mem_1"
     assert logs[0]["context_key"] == "ctx_mem"
-    assert logs[0]["tool_name"] == "tool_a"
+    assert logs[0]["candidate_name"] == "tool_a"
     assert logs[0]["reward"] is None
 
     mem_store.log_feedback("trace_mem_1", 1.0)
@@ -261,7 +261,7 @@ def test_storage_selection_logging():
         assert len(logs) == 1
         assert logs[0]["trace_id"] == "trace_sql_1"
         assert logs[0]["context_key"] == "ctx_sql"
-        assert logs[0]["tool_name"] == "tool_b"
+        assert logs[0]["candidate_name"] == "tool_b"
         assert logs[0]["reward"] is None
 
         sql_store.log_feedback("trace_sql_1", 0.0)

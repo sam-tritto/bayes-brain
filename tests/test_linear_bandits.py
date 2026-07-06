@@ -48,24 +48,24 @@ def test_lints_routing_and_convergence():
         diagonal_covariance=False
     )
 
-    candidate_tools = ["tool_math", "tool_other"]
+    candidates = ["tool_math", "tool_other"]
 
     # Initially, both tools should be routed occasionally
-    choices = [router.route("solve math equation", candidate_tools) for _ in range(10)]
+    choices = [router.route("solve math equation", candidates) for _ in range(10)]
     assert len(choices) == 10
 
     # Simulate feedback: tool_math always succeeds (reward=1.0) on math queries, tool_other always fails (reward=0.0)
     for _ in range(15):
-        tool, trace_id = router.route_with_trace("solve math equation", candidate_tools)
-        reward = 1.0 if tool == "tool_math" else 0.0
+        candidate_name, trace_id = router.route_with_trace("solve math equation", candidates)
+        reward = 1.0 if candidate_name== "tool_math" else 0.0
         router.feedback_by_trace(trace_id, reward=reward)
 
     # After feedback, tool_math should be consistently chosen for math queries
-    final_choices = [router.route("solve math equation", candidate_tools) for _ in range(10)]
+    final_choices = [router.route("solve math equation", candidates) for _ in range(10)]
     assert all(c == "tool_math" for c in final_choices)
 
     # Expected reward for tool_math under math context should be close to 1.0, uncertainty should be small
-    mean_val, uncertainty_val = router.get_tool_beliefs("solve math equation", "tool_math")
+    mean_val, uncertainty_val = router.get_candidate_beliefs("solve math equation", "tool_math")
     assert mean_val > 0.8
     assert uncertainty_val < 0.5
 
@@ -81,15 +81,15 @@ def test_lints_diagonal_covariance_routing():
         diagonal_covariance=True
     )
 
-    candidate_tools = ["tool_math", "tool_other"]
+    candidates = ["tool_math", "tool_other"]
 
     # Train diagonal covariance model
     for _ in range(15):
-        tool, trace_id = router.route_with_trace("solve math equation", candidate_tools)
-        reward = 1.0 if tool == "tool_math" else 0.0
+        candidate_name, trace_id = router.route_with_trace("solve math equation", candidates)
+        reward = 1.0 if candidate_name== "tool_math" else 0.0
         router.feedback_by_trace(trace_id, reward=reward)
 
-    final_choices = [router.route("solve math equation", candidate_tools) for _ in range(10)]
+    final_choices = [router.route("solve math equation", candidates) for _ in range(10)]
     assert all(c == "tool_math" for c in final_choices)
 
 
@@ -104,16 +104,16 @@ def test_linucb_routing_and_convergence():
         diagonal_covariance=False
     )
 
-    candidate_tools = ["tool_math", "tool_other"]
+    candidates = ["tool_math", "tool_other"]
 
     # Train LinUCB
     for _ in range(15):
-        tool, trace_id = router.route_with_trace("solve math equation", candidate_tools)
-        reward = 1.0 if tool == "tool_math" else 0.0
+        candidate_name, trace_id = router.route_with_trace("solve math equation", candidates)
+        reward = 1.0 if candidate_name== "tool_math" else 0.0
         router.feedback_by_trace(trace_id, reward=reward)
 
     # LinUCB is deterministic given parameters, so it should consistently select the best tool now
-    final_choices = [router.route("solve math equation", candidate_tools) for _ in range(5)]
+    final_choices = [router.route("solve math equation", candidates) for _ in range(5)]
     assert all(c == "tool_math" for c in final_choices)
 
 
@@ -128,15 +128,15 @@ def test_linucb_diagonal_covariance():
         diagonal_covariance=True
     )
 
-    candidate_tools = ["tool_math", "tool_other"]
+    candidates = ["tool_math", "tool_other"]
 
     # Train LinUCB with diagonal covariance
     for _ in range(15):
-        tool, trace_id = router.route_with_trace("solve math equation", candidate_tools)
-        reward = 1.0 if tool == "tool_math" else 0.0
+        candidate_name, trace_id = router.route_with_trace("solve math equation", candidates)
+        reward = 1.0 if candidate_name== "tool_math" else 0.0
         router.feedback_by_trace(trace_id, reward=reward)
 
-    final_choices = [router.route("solve math equation", candidate_tools) for _ in range(5)]
+    final_choices = [router.route("solve math equation", candidates) for _ in range(5)]
     assert all(c == "tool_math" for c in final_choices)
 
 
@@ -153,7 +153,7 @@ def test_linear_sqlite_storage(tmp_path):
     )
     
     # Run route and feedback to trigger updates in SQLite
-    tool, trace_id = router.route_with_trace("solve math equation", ["t1", "t2"])
+    candidate_name, trace_id = router.route_with_trace("solve math equation", ["t1", "t2"])
     router.feedback_by_trace(trace_id, reward=1.0)
     
     # Reload from same DB file to ensure storage persistence
@@ -187,18 +187,18 @@ async def test_async_lints_routing_and_feedback(tmp_path):
         exploration_weight=0.1,
     )
     
-    candidate_tools = ["tool_math", "tool_other"]
+    candidates = ["tool_math", "tool_other"]
     
     # Route and feedback multiple times asynchronously
     for _ in range(10):
-        tool, trace_id = await router.aroute_with_trace("solve math equation", candidate_tools)
-        reward = 1.0 if tool == "tool_math" else 0.0
+        candidate_name, trace_id = await router.aroute_with_trace("solve math equation", candidates)
+        reward = 1.0 if candidate_name== "tool_math" else 0.0
         await router.afeedback_by_trace(trace_id, reward=reward)
         
     final_choices = []
     for _ in range(5):
-        tool = await router.aroute("solve math equation", candidate_tools)
-        final_choices.append(tool)
+        candidate_name=await router.aroute("solve math equation", candidates)
+        final_choices.append(candidate_name)
         
     # Since tool_math always succeeds, it should start dominating
     assert "tool_math" in final_choices

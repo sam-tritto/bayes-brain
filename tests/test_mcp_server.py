@@ -18,7 +18,7 @@ def test_mcp_server_creation():
         mcp = create_mcp_server(
             server_name="TestBanditServer",
             db_path=db_path,
-            sub_tools=["tool1", "tool2"]
+            candidates=["tool1", "tool2"]
         )
 
         assert isinstance(mcp, FastMCP)
@@ -28,8 +28,8 @@ def test_mcp_server_creation():
         # FastMCP stores registered tools in a dictionary or list
         # Let's inspect the tools registered in the FastMCP instance
         tools = mcp._tool_manager.list_tools() if hasattr(mcp, "_tool_manager") else []
-        tool_names = [t.name for t in tools]
-        assert "execute_adaptive_action" in tool_names or len(tool_names) > 0
+        candidate_names = [t.name for t in tools]
+        assert "execute_adaptive_action" in candidate_names or len(candidate_names) > 0
     finally:
         # Clean up database file
         if os.path.exists(db_path):
@@ -46,11 +46,11 @@ async def test_mcp_server_administrative_features():
         mcp = create_mcp_server(
             server_name="TestBanditAdminServer",
             db_path=db_path,
-            sub_tools=["tool1", "tool2"]
+            candidates=["tool1", "tool2"]
         )
 
         # 1. Get initial beliefs for a context
-        res_tool, _ = await mcp.call_tool("get_tool_beliefs", {"context": "pytest styling"})
+        res_tool, _ = await mcp.call_tool("get_candidate_beliefs", {"context": "pytest styling"})
         beliefs = json.loads(res_tool[0].text)
         assert beliefs["tool1"] == {"alpha": 1.0, "beta": 1.0}
         assert beliefs["tool2"] == {"alpha": 1.0, "beta": 1.0}
@@ -58,10 +58,10 @@ async def test_mcp_server_administrative_features():
         # 2. Execute adaptive action (this should route, execute, and submit feedback)
         res_exec, _ = await mcp.call_tool("execute_adaptive_action", {"task_description": "pytest styling"})
         exec_text = res_exec[0].text
-        assert "Selected Tool" in exec_text
+        assert "Selected Candidate" in exec_text
 
         # 3. Get updated beliefs
-        res_tool_updated, _ = await mcp.call_tool("get_tool_beliefs", {"context": "pytest styling"})
+        res_tool_updated, _ = await mcp.call_tool("get_candidate_beliefs", {"context": "pytest styling"})
         beliefs_updated = json.loads(res_tool_updated[0].text)
         
         # One of the tools should have evolved parameters
@@ -86,11 +86,11 @@ async def test_mcp_server_administrative_features():
         assert "Chronological Execution Log" in metrics_text
 
         # 5. Reset beliefs for the updated tool
-        res_reset, _ = await mcp.call_tool("reset_beliefs", {"context": "pytest styling", "tool": updated_tool})
+        res_reset, _ = await mcp.call_tool("reset_candidate_beliefs", {"context": "pytest styling", "candidate": updated_tool})
         assert "been reset" in res_reset[0].text
 
         # 6. Verify they are back to (1.0, 1.0)
-        res_tool_reset, _ = await mcp.call_tool("get_tool_beliefs", {"context": "pytest styling"})
+        res_tool_reset, _ = await mcp.call_tool("get_candidate_beliefs", {"context": "pytest styling"})
         beliefs_reset = json.loads(res_tool_reset[0].text)
         assert beliefs_reset[updated_tool] == {"alpha": 1.0, "beta": 1.0}
 
@@ -119,18 +119,18 @@ async def test_mcp_server_contextual_priors():
         mcp = create_mcp_server(
             server_name="TestBanditContextPriorsServer",
             db_path=db_path,
-            sub_tools=["tool1", "tool2"],
+            candidates=["tool1", "tool2"],
             contextual_priors=contextual_priors
         )
 
         # Retrieve tool beliefs for a math task context
-        res_tool, _ = await mcp.call_tool("get_tool_beliefs", {"context": "perform calculator sum"})
+        res_tool, _ = await mcp.call_tool("get_candidate_beliefs", {"context": "perform calculator sum"})
         beliefs = json.loads(res_tool[0].text)
         assert beliefs["tool1"] == {"alpha": 50.0, "beta": 1.0}
         assert beliefs["tool2"] == {"alpha": 1.0, "beta": 50.0}
 
         # Retrieve tool beliefs for a non-math task context (should fall back to defaults)
-        res_tool_fallback, _ = await mcp.call_tool("get_tool_beliefs", {"context": "general query"})
+        res_tool_fallback, _ = await mcp.call_tool("get_candidate_beliefs", {"context": "general query"})
         beliefs_fallback = json.loads(res_tool_fallback[0].text)
         assert beliefs_fallback["tool1"] == {"alpha": 1.0, "beta": 1.0}
         assert beliefs_fallback["tool2"] == {"alpha": 1.0, "beta": 1.0}
