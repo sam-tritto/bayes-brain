@@ -463,6 +463,11 @@ mcp = create_mcp_server(
 )
 ```
 
+You can launch the server over `stdio` by executing:
+```bash
+python -m bayesian_cortex.mcp_server
+```
+
 ### Registered Candidates, Skills & Resources
 
 | Endpoint | Type | Description |
@@ -472,12 +477,85 @@ mcp = create_mcp_server(
 | `reset_candidate_beliefs` | `Tool` | Reset the beliefs back to the default prior for a candidate/skill under a context. |
 | `cortex://metrics` | `Resource` | Exposes a Markdown Dashboard with context clusters, expected success rates, and raw telemetry metrics. |
 
-### Visual Diagnostics on the Metrics Dashboard
+### 🛠️ Host Integration Configuration
+
+Configure your agent or host to run the MCP server. Below are standard configuration profiles for popular clients:
+
+#### 💻 Claude Code (CLI Agent)
+Claude Code supports MCP dynamically from your shell. 
+
+* **Automatic CLI Setup:**
+  ```bash
+  claude mcp add bayesian-cortex python3 /path/to/bayesian-cortex/src/bayesian_cortex/mcp_server.py
+  ```
+  *(Make sure to replace `/path/to/bayesian-cortex` with the absolute path to your cloned directory).*
+
+* **Manual Configuration:**
+  Edit your global configuration file (usually located at `~/.claude.json`) and add:
+  ```json
+  {
+    "mcpServers": {
+      "bayesian-cortex": {
+        "command": "python3",
+        "args": ["/path/to/bayesian-cortex/src/bayesian_cortex/mcp_server.py"],
+        "env": {
+          "BAYES_DB_PATH": "/path/to/bayesian-cortex/mcp_bandit.db"
+        }
+      }
+    }
+  }
+  ```
+
+#### 👾 Antigravity & VS Code (Cursor / IDE Extensions)
+If using Antigravity or a similar IDE-integrated assistant (e.g., Cursor, Roo Code, VS Code MCP settings), add the following server configuration in your extension settings:
+
+- **Type / Transport:** `command`
+- **Name:** `bayesian-cortex`
+- **Command:** `python3`
+- **Arguments:** `/path/to/bayesian-cortex/src/bayesian_cortex/mcp_server.py`
+- **Environment Variables:** `BAYES_DB_PATH=/path/to/bayesian-cortex/mcp_bandit.db`
+
+#### 🖥️ Claude Desktop
+On macOS, Claude Desktop configures its MCP servers via `~/Library/Application Support/Claude/claude_desktop_config.json` (on Windows: `%APPDATA%/Claude/claude_desktop_config.json`).
+
+Add the following to your config:
+```json
+{
+  "mcpServers": {
+    "bayesian-cortex": {
+      "command": "python3",
+      "args": [
+        "/path/to/bayesian-cortex/src/bayesian_cortex/mcp_server.py"
+      ],
+      "env": {
+        "BAYES_DB_PATH": "/path/to/bayesian-cortex/mcp_bandit.db"
+      }
+    }
+  }
+}
+```
+
+### 📈 Visual Diagnostics on the Metrics Dashboard (`cortex://metrics`)
 The `cortex://metrics` dashboard exposes rich, live visuals to monitor routing decisions and distributions in real time:
 * **ASCII Sparklines**: Displays inline unicode block characters (e.g. ` ▂▃▅▇█▆▄▂`) representing the shape of the $\text{Beta}(\alpha, \beta)$ probability distribution next to each candidate/skill in the context clusters table.
 * **Beta PDF SVG Charts**: Renders custom inline SVG charts mapping probability density curves for all candidate candidates/skills under each context cluster (utilizing SciPy's Beta stats model), complete with colors, legends, labels, and coordinate grids.
 * **Recent Executions Log**: Lists the 20 most recent routing executions chronologically, detailing the Trace ID, Timestamp, Context Cluster, Selected Candidate/Skill, and Reward feedback outcome.
 * **History MA10 SVG Line Chart**: Renders a chronological line plot tracking the running moving average success rates of candidate candidates/skills over time.
+
+#### How to open the dashboard:
+* **Using your Agent:** Ask your agent: *"Read the resource `cortex://metrics`"*
+* **Using a GUI Client (e.g., Cursor/Claude Desktop):** Look at the **Resources** pane or icon in the chat interface and click on `cortex://metrics` to open the live view.
+
+---
+
+## 🧪 Testing with the Interactive Demo
+
+To witness Thompson Sampling adapt to drifting API failure rates in real time, run the built-in simulation script:
+
+```bash
+uv run python demo.py
+```
+This script initializes a local SQLite bandit database, generates simulated query clusters (e.g., coding tasks, web search queries), routes them, simulates execution, updates priors, and prints ASCII sparklines showing the learning process.
 
 ---
 
