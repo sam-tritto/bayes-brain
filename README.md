@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/logo.png?v=2" alt="BayesianCortex Logo" width="400">
+  <img src="https://raw.githubusercontent.com/sam-tritto/bayesian-cortex/main/assets/logo.png" alt="BayesianCortex Logo" width="400">
   <br>
   <br>
   <a href="https://pypi.org/project/bayesian_cortex/"><img src="https://img.shields.io/pypi/v/bayesian_cortex.svg" alt="PyPI version"></a>
@@ -268,7 +268,7 @@ uv run python demo.py
 This script initializes a local SQLite bandit database, generates simulated query clusters (e.g., coding tasks, web search queries), routes them, simulates execution, updates priors, and prints ASCII sparklines showing the learning process.
 
 <p align="center">
-  <img src="assets/demo_interactive.png" alt="Manual Interactive Routing Loop" width="700"/>
+  <img src="https://raw.githubusercontent.com/sam-tritto/bayesian-cortex/main/assets/demo_interactive.png" alt="Manual Interactive Routing Loop" width="700"/>
 </p>
 
 ---
@@ -627,7 +627,7 @@ The `cortex://metrics` dashboard exposes rich, live visuals to monitor routing d
 * **History MA10 SVG Line Chart**: Renders a chronological line plot tracking the running moving average success rates of candidate candidates/skills over time.
 
 <p align="center">
-  <img src="assets/demo_dashboard.png" alt="Bayesian Cortex Beliefs Dashboard" width="700"/>
+  <img src="https://raw.githubusercontent.com/sam-tritto/bayesian-cortex/main/assets/demo_dashboard.png" alt="Bayesian Cortex Beliefs Dashboard" width="700"/>
 </p>
 
 #### How to open the dashboard:
