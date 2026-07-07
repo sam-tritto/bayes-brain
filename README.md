@@ -19,45 +19,6 @@ BayesianCortex completes what AI architects call the **"Golden Triad" of Agent A
 
 ---
 
-## The Core Math Engine
-
-To prevent runtime latency, BayesianCortex avoids heavy Markov Chain Monte Carlo (MCMC) sampling (e.g., PyMC or Stan). Instead, it uses exact closed-form updates and supports two main mathematical modes: **Context Clustering** (Beta-Binomial) and **Linear Contextual Bandits** (LinTS / LinUCB).
-
-### 1. Context Clustering Mode (Beta-Binomial Conjugate Pair)
-Each candidate $i$ in a context cluster is modeled as a Beta distribution representing the belief of its success probability:
-
-1. **Belief Representation**: $\theta_i \sim \text{Beta}(\alpha_i, \beta_i)$.
-2. **Prior (Initial State)**: $\alpha_i = 1.0, \beta_i = 1.0$ (Uniform flat prior representing total uncertainty).
-3. **Thompson Sampling**: For each candidate candidate, sample a success probability:
-   $$\theta_i \sim \text{Beta}(\alpha_i, \beta_i)$$
-   Select the candidate with the highest sampled probability:
-   $$i^* = \arg\max_{i} \theta_i$$
-4. **Posterior Update (Telemetry)**:
-   - **Success**: $\alpha_i \leftarrow \alpha_i + \text{reward}$
-   - **Failure**: $\beta_i \leftarrow \beta_i + (1 - \text{reward})$
-
-#### Handling Non-Stationary Environments (Drifting APIs)
-If an API starts failing or degrades over time, historical successes should not dominate the routing indefinitely. BayesianCortex applies an exponential decay factor $\gamma \in (0, 1]$ on historical updates prior to adding new rewards:
-$$\alpha_t = \max(1.0, \gamma \alpha_{t-1} + \text{reward})$$
-$$\beta_t = \max(1.0, \gamma \beta_{t-1} + (1 - \text{reward}))$$
-
-Both parameters are strictly clamped to a lower-bound of `1.0` to prevent the distribution from becoming U-shaped/bimodal, which stabilizes Thompson Sampling exploration.
-
----
-
-### 2. Linear Contextual Bandits Mode (LinTS & LinUCB)
-Instead of partitioning tasks into discrete clusters, the linear modes learn a linear relationship between the continuous task embedding space and the expected reward. Let the text embedding vector be $x \in \mathbb{R}^d$. We augment it with a bias term $x' = [x, 1.0]$ to learn prior success rates as linear offsets.
-
-* **Linear Thompson Sampling (LinTS)**: Models the success probability parameter $\theta_a$ for candidate $a$ as a linear combination of features, $\theta_a = x'^T w_a$, where weights $w_a$ are sampled from the posterior distribution $\mathcal{N}(\hat{w}_a, v^2 B_a^{-1})$.
-* **Linear UCB (LinUCB)**: Selects the candidate maximizing the upper confidence bound of the expected reward:
-  $$a^* = \arg\max_a \left(x'^T \hat{w}_a + \alpha \sqrt{x'^T B_a^{-1} x'}\right)$$
-  where $\hat{w}_a$ is the ridge regression estimate, $B_a$ is the precision matrix, and $\alpha$ (or $v$) is the exploration weight.
-* **L2 Regularization ($\lambda$)**: Performs ridge regression shrinkage on parameters.
-* **Diagonal Covariance Approximation**: Optional diagonal approximation ($O(d)$ runtime/storage) to avoid full matrix inversion ($O(d^3)$) during high-throughput execution.
-* **Shared-Parameter (Hybrid) Contextual Bandits**: Maps the task context $x_c$ and the candidate's embedding $t_a$ into a single joint feature space, $x_{\text{augmented}} = [x_c, t_a, 1.0]$, and maintains a single unified weight vector $w \in \mathbb{R}^{d_{ctx} + d_{candidate} + 1}$ across all candidates. This eliminates disjoint parameter spaces and enables zero-shot generalization.
-
----
-
 ## Architectural Overview
 
 BayesianCortex is decoupled from your execution layer, acting as a lightweight interceptor/middleware:
@@ -235,6 +196,45 @@ async def main():
 
 asyncio.run(main())
 ```
+
+---
+
+## The Core Math Engine
+
+To prevent runtime latency, BayesianCortex avoids heavy Markov Chain Monte Carlo (MCMC) sampling (e.g., PyMC or Stan). Instead, it uses exact closed-form updates and supports two main mathematical modes: **Context Clustering** (Beta-Binomial) and **Linear Contextual Bandits** (LinTS / LinUCB).
+
+### 1. Context Clustering Mode (Beta-Binomial Conjugate Pair)
+Each candidate $i$ in a context cluster is modeled as a Beta distribution representing the belief of its success probability:
+
+1. **Belief Representation**: $\theta_i \sim \text{Beta}(\alpha_i, \beta_i)$.
+2. **Prior (Initial State)**: $\alpha_i = 1.0, \beta_i = 1.0$ (Uniform flat prior representing total uncertainty).
+3. **Thompson Sampling**: For each candidate candidate, sample a success probability:
+   $$\theta_i \sim \text{Beta}(\alpha_i, \beta_i)$$
+   Select the candidate with the highest sampled probability:
+   $$i^* = \arg\max_{i} \theta_i$$
+4. **Posterior Update (Telemetry)**:
+   - **Success**: $\alpha_i \leftarrow \alpha_i + \text{reward}$
+   - **Failure**: $\beta_i \leftarrow \beta_i + (1 - \text{reward})$
+
+#### Handling Non-Stationary Environments (Drifting APIs)
+If an API starts failing or degrades over time, historical successes should not dominate the routing indefinitely. BayesianCortex applies an exponential decay factor $\gamma \in (0, 1]$ on historical updates prior to adding new rewards:
+$$\alpha_t = \max(1.0, \gamma \alpha_{t-1} + \text{reward})$$
+$$\beta_t = \max(1.0, \gamma \beta_{t-1} + (1 - \text{reward}))$$
+
+Both parameters are strictly clamped to a lower-bound of `1.0` to prevent the distribution from becoming U-shaped/bimodal, which stabilizes Thompson Sampling exploration.
+
+---
+
+### 2. Linear Contextual Bandits Mode (LinTS & LinUCB)
+Instead of partitioning tasks into discrete clusters, the linear modes learn a linear relationship between the continuous task embedding space and the expected reward. Let the text embedding vector be $x \in \mathbb{R}^d$. We augment it with a bias term $x' = [x, 1.0]$ to learn prior success rates as linear offsets.
+
+* **Linear Thompson Sampling (LinTS)**: Models the success probability parameter $\theta_a$ for candidate $a$ as a linear combination of features, $\theta_a = x'^T w_a$, where weights $w_a$ are sampled from the posterior distribution $\mathcal{N}(\hat{w}_a, v^2 B_a^{-1})$.
+* **Linear UCB (LinUCB)**: Selects the candidate maximizing the upper confidence bound of the expected reward:
+  $$a^* = \arg\max_a \left(x'^T \hat{w}_a + \alpha \sqrt{x'^T B_a^{-1} x'}\right)$$
+  where $\hat{w}_a$ is the ridge regression estimate, $B_a$ is the precision matrix, and $\alpha$ (or $v$) is the exploration weight.
+* **L2 Regularization ($\lambda$)**: Performs ridge regression shrinkage on parameters.
+* **Diagonal Covariance Approximation**: Optional diagonal approximation ($O(d)$ runtime/storage) to avoid full matrix inversion ($O(d^3)$) during high-throughput execution.
+* **Shared-Parameter (Hybrid) Contextual Bandits**: Maps the task context $x_c$ and the candidate's embedding $t_a$ into a single joint feature space, $x_{\text{augmented}} = [x_c, t_a, 1.0]$, and maintains a single unified weight vector $w \in \mathbb{R}^{d_{ctx} + d_{candidate} + 1}$ across all candidates. This eliminates disjoint parameter spaces and enables zero-shot generalization.
 
 ---
 
