@@ -742,6 +742,7 @@ class BayesianRouter:
         trace_id: str,
         success: Optional[bool] = None,
         reward: Optional[float] = None,
+        strict: bool = False,
     ) -> Tuple[float, float]:
         """
         Directly submit candidate execution feedback using a generated trace ID.
@@ -863,6 +864,8 @@ class BayesianRouter:
                 return expected_reward, uncertainty
 
         except Exception as e:
+            if strict:
+                raise
             logger.exception("BayesianRouter feedback by trace submission failed.")
             if self.telemetry_hook:
                 try:
@@ -2141,6 +2144,7 @@ class AsyncBayesianRouter:
         trace_id: str,
         success: Optional[bool] = None,
         reward: Optional[float] = None,
+        strict: bool = False,
     ) -> Tuple[float, float]:
         if success is None and reward is None:
             raise ValueError("Either 'success' or 'reward' must be provided.")
@@ -2259,6 +2263,8 @@ class AsyncBayesianRouter:
                 return expected_reward, uncertainty
 
         except Exception as e:
+            if strict:
+                raise
             logger.exception("AsyncBayesianRouter feedback by trace submission failed.")
             await self._call_telemetry(
                 "feedback_by_trace_failure",
