@@ -10,7 +10,7 @@
 
 # BayesianCortex: Dynamic Agent Routing via Contextual Bayesian Bandits
 
-**What is BayesianCortex? 🧠**
+## **What is BayesianCortex? 🧠**
 
 AI agents are built with rigid utility belts. When you ask them to do a task, they guess which tool or prompt to use based on static logic. They don't learn from their mistakes, and they easily fall apart when things fail silently.
 BayesianCortex changes that by introducing a dynamic learning loop and treats routing as a **Contextual Multi-Armed Bandit** using **Thompson Sampling** with exact conjugate updates. 
