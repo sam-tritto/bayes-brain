@@ -12,13 +12,19 @@
 
 **What is BayesianCortex? 🧠**
 
-Most AI agents are built with rigid utility belts. When you ask them to do a task, they guess which tool or prompt to use based on static logic. They don't learn from their mistakes, and they easily fall apart when things fail silently.
-BayesianCortex changes that by introducing a dynamic learning loop and treats routing as a **Contextual Multi-Armed Bandit** using **Thompson Sampling** with exact conjugate updates. It manages what AI architects call **"The Golden Triad"** of how an agent interacts with the world, adapting on the fly:
+AI agents are built with rigid utility belts. When you ask them to do a task, they guess which tool or prompt to use based on static logic. They don't learn from their mistakes, and they easily fall apart when things fail silently.
+BayesianCortex changes that by introducing a dynamic learning loop and treats routing as a **Contextual Multi-Armed Bandit** using **Thompson Sampling** with exact conjugate updates. 
+
+It manages what AI architects call **"The Golden Triad"** of how an agent interacts with the world, adapting on the fly:
 * 🛠️ **Tools (The Hands)**: It learns which specific action (like a SQL database query vs. a web search API) successfully retrieves the data you need without throwing errors.
 * 💡 **Skills (The Mind)**: It tracks which specialized prompt or workflow gets the best results, letting the agent ditch underperforming instructions that cause hallucinations.
 * 📚 **Memory (The Records)**: It figures out exactly which document vault or retrieval strategy holds the true answer to a user's question, cutting down on token waste.
 
 In short: It stops your agents from repeating the same mistakes, turning raw AI loops into self-optimizing systems that get smarter with every single run, and adapts in real time to failures, hallucinations, or shifting environment dynamics.
+
+Stop burning tokens and install **BayesianCortex** today!
+
+Works with [OpenAI](https://openai.com/), [Anthropic](https://www.anthropic.com/), [Google Gemini](https://gemini.google.com/), [FastMCP](https://fastmcp.io/), and [any](https://github.com/sam-tritto/bayesian-cortex/blob/main/src/bayesian_cortex/transports/fastmcp_transport.py#L56-L102) [more](https://github.com/sam-tritto/bayesian-cortex/blob/main/src/bayesian_cortex/transports/anthropic_transport.py#L47-L94)! You just have to plug in your own **Transport Layer**, and you're good to go.
 
 ---
 
@@ -199,6 +205,20 @@ async def main():
 
 asyncio.run(main())
 ```
+---
+
+## 🧪 Testing with the Interactive Demo
+
+To witness Thompson Sampling adapt to drifting API failure rates in real time, run the built-in simulation script:
+
+```bash
+uv run python demo.py
+```
+This script initializes a local SQLite bandit database, generates simulated query clusters (e.g., coding tasks, web search queries), routes them, simulates execution, updates priors, and prints ASCII sparklines showing the learning process.
+
+<p align="center">
+  <img src="assets/demo_interactive.png" alt="Manual Interactive Routing Loop" width="700"/>
+</p>
 
 ---
 
@@ -562,21 +582,6 @@ The `cortex://metrics` dashboard exposes rich, live visuals to monitor routing d
 #### How to open the dashboard:
 * **Using your Agent:** Ask your agent: *"Read the resource `cortex://metrics`"*
 * **Using a GUI Client (e.g., Cursor/Claude Desktop):** Look at the **Resources** pane or icon in the chat interface and click on `cortex://metrics` to open the live view.
-
----
-
-## 🧪 Testing with the Interactive Demo
-
-To witness Thompson Sampling adapt to drifting API failure rates in real time, run the built-in simulation script:
-
-```bash
-uv run python demo.py
-```
-This script initializes a local SQLite bandit database, generates simulated query clusters (e.g., coding tasks, web search queries), routes them, simulates execution, updates priors, and prints ASCII sparklines showing the learning process.
-
-<p align="center">
-  <img src="assets/demo_interactive.png" alt="Manual Interactive Routing Loop" width="700"/>
-</p>
 
 ---
 
