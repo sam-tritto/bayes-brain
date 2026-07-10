@@ -194,19 +194,41 @@ class BayesianRouter:
             self._context_store = vector_store
         else:
             self._context_store = VectorContextStore()
-            self._load_context_store()
+            try:
+                self._load_context_store()
+            except Exception as exc:
+                raise RuntimeError(
+                    "BayesianRouter could not restore its cluster index from the "
+                    "storage backend on startup. Resolve the underlying storage "
+                    "error before the router is used, otherwise all routing "
+                    "history will be lost and the bandit will start from scratch."
+                ) from exc
 
     def _load_context_store(self) -> None:
-        """Attempt to restore the VectorContextStore from the storage backend."""
+        """Attempt to restore the VectorContextStore from the storage backend.
+
+        Raises the underlying storage exception so that callers can distinguish
+        a genuine cold start (empty DB) from a transient failure (e.g. DB
+        locked at boot).  Silently continuing on error would leave the router
+        with an empty vector store and cause it to re-learn all clusters from
+        scratch without any observable signal.
+        """
         if self._custom_vector_store_active:
             return
         try:
             vectors = self.storage.load_all_vectors()
             for key, vector in vectors.items():
                 self._context_store.add_context(key, vector)
-        except Exception:
-            # Fall back to empty context store if retrieval or decoding fails
-            pass
+        except Exception as exc:
+            logger.warning(
+                "Failed to restore VectorContextStore from storage backend "
+                "(%s: %s); the in-memory cluster index will be empty until "
+                "the error is resolved.",
+                type(exc).__name__,
+                exc,
+                exc_info=True,
+            )
+            raise
 
     def _save_context_store(self) -> None:
         """Persist the VectorContextStore to the storage backend."""
@@ -1625,19 +1647,36 @@ class AsyncBayesianRouter:
         async with self._init_lock:
             if self._initialized:
                 return
+            # Only mark initialized on success; a transient failure (e.g.
+            # DB locked at boot) should be retried on the next call.
             await self._load_context_store()
             self._initialized = True
 
     async def _load_context_store(self) -> None:
-        """Attempt to restore the VectorContextStore from the storage backend."""
+        """Attempt to restore the VectorContextStore from the storage backend.
+
+        Raises the underlying storage exception so that callers can distinguish
+        a genuine cold start (empty DB) from a transient failure (e.g. DB
+        locked at boot).  Silently continuing on error would leave the router
+        with an empty vector store and cause it to re-learn all clusters from
+        scratch without any observable signal.
+        """
         if self._custom_vector_store_active:
             return
         try:
             vectors = await self.storage.load_all_vectors()
             for key, vector in vectors.items():
                 await self._context_store.aadd_context(key, vector)
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning(
+                "Failed to restore VectorContextStore from storage backend "
+                "(%s: %s); the in-memory cluster index will be empty until "
+                "the error is resolved.",
+                type(exc).__name__,
+                exc,
+                exc_info=True,
+            )
+            raise
 
     async def _save_context_store(self) -> None:
         """Persist the VectorContextStore to the storage backend."""
