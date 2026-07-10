@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+---
+
+## [0.1.3] — 2026-07-09
+
 ### Added
 - GitHub Actions CI workflow: runs the full test suite on Python 3.11 and 3.12
   on every push and pull request, with coverage uploaded to Codecov.
@@ -21,17 +25,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   critical paths — decay math precision, linear feedback vector lookup,
   diagonal covariance paths, `get_candidate_beliefs` on all modes,
   batch routing/feedback, `VectorContextStore` edge cases, and linear param
-  persistence round-trips through SQLite.
+  persistence round-trips through SQLite. `rag.py` now at **100%** coverage.
 - Dynamic CI status and Codecov coverage badges in README (replacing the
   hardcoded `61%` badge).
 - `[project.urls]` table in `pyproject.toml` (Homepage, Repository, Issues, Changelog).
+- `CHANGELOG.md` with full version history going back to `v0.1.0`.
 
 ### Changed
+- **`redis`, `sqlite-vec`, `aiosqlite`, `httpx`, and `mcp` are no longer
+  mandatory core dependencies.** Only `numpy` and `scipy` are required for a
+  bare install. All backends are now opt-in via extras:
+  - `bayesian-cortex[sqlite]` — `AsyncSQLiteStorage`
+  - `bayesian-cortex[sqlite-vec]` — `SQLiteVectorStore` / `AsyncSQLiteVectorStore`
+  - `bayesian-cortex[redis]` — `RedisStorage` / `AsyncRedisStorage`
+  - `bayesian-cortex[async-embeddings]` — async `GeminiEmbedder` / `OpenAIEmbedder`
+  - `bayesian-cortex[mcp]` — MCP server
+  - `bayesian-cortex[local-ml]` — `LocalSentenceTransformerEmbedder`
+  - `bayesian-cortex[all]` — everything
 - `[dependency-groups] dev` now includes `pytest-cov>=5.0.0` and
-  `coverage[toml]>=7.0.0` so coverage runs without extra setup.
-- `[tool.coverage.report]` gate raised from 55% → 63% to lock in gains and
-  prevent future regressions.
-- `rag.py` reaches **100%** test coverage; `router.py` improved from 61% → 66%.
+  `coverage[toml]>=7.0.0`.
+- `[tool.coverage.report] fail_under` raised from 55% → 63% to lock in gains.
+- README installation section updated to document all extras.
+- Changelog URL in `[project.urls]` now points directly to `CHANGELOG.md`
+  instead of the releases page.
 
 ---
 
@@ -157,7 +173,8 @@ Initial release of `bayes-brain` (now `bayesian-cortex`).
 
 ---
 
-[Unreleased]: https://github.com/sam-tritto/bayesian-cortex/compare/v0.1.2...HEAD
+[Unreleased]: https://github.com/sam-tritto/bayesian-cortex/compare/v0.1.3...HEAD
+[0.1.3]: https://github.com/sam-tritto/bayesian-cortex/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/sam-tritto/bayesian-cortex/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/sam-tritto/bayesian-cortex/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/sam-tritto/bayesian-cortex/releases/tag/v0.1.0

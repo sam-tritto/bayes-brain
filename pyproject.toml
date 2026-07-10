@@ -1,6 +1,6 @@
 [project]
 name = "bayesian_cortex"
-version = "0.1.2"
+version = "0.1.3"
 description = "Dynamic Agent Routing via Contextual Multi-Arm Bayesian Bandits"
 readme = "README.md"
 authors = [
@@ -8,17 +8,45 @@ authors = [
 ]
 requires-python = ">=3.11"
 dependencies = [
+    # Core math — always required
     "numpy>=1.24.0",
     "scipy>=1.10.0",
-    "redis>=5.0.0",
-    "mcp>=0.1.0",
-    "sqlite-vec>=0.1.0",
-    "aiosqlite>=0.19.0",
-    "httpx>=0.24.0",
 ]
 
 [project.optional-dependencies]
+# Persistent SQLite storage (SQLiteStorage / AsyncSQLiteStorage)
+sqlite = [
+    "aiosqlite>=0.19.0",
+]
+# Native ANN vector search in SQLite (SQLiteVectorStore / AsyncSQLiteVectorStore)
+sqlite-vec = [
+    "sqlite-vec>=0.1.0",
+    "aiosqlite>=0.19.0",
+]
+# Redis storage backends (RedisStorage / AsyncRedisStorage)
+redis = [
+    "redis>=5.0.0",
+]
+# Async HTTP for GeminiEmbedder / OpenAIEmbedder async methods
+async-embeddings = [
+    "httpx>=0.24.0",
+]
+# MCP server integration
+mcp = [
+    "mcp>=0.1.0",
+    "aiosqlite>=0.19.0",
+]
+# Local sentence-transformers embedder
 local-ml = [
+    "sentence-transformers>=2.2.0",
+]
+# Everything at once
+all = [
+    "aiosqlite>=0.19.0",
+    "sqlite-vec>=0.1.0",
+    "redis>=5.0.0",
+    "httpx>=0.24.0",
+    "mcp>=0.1.0",
     "sentence-transformers>=2.2.0",
 ]
 
@@ -26,7 +54,7 @@ local-ml = [
 Homepage = "https://github.com/sam-tritto/bayesian-cortex"
 Repository = "https://github.com/sam-tritto/bayesian-cortex"
 Issues = "https://github.com/sam-tritto/bayesian-cortex/issues"
-Changelog = "https://github.com/sam-tritto/bayesian-cortex/releases"
+Changelog = "https://github.com/sam-tritto/bayesian-cortex/blob/main/CHANGELOG.md"
 
 [dependency-groups]
 dev = [

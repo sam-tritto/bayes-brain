@@ -118,18 +118,30 @@ BayesianCortex is decoupled from your execution layer, acting as a lightweight i
 Install using `uv` or standard pip:
 
 ```bash
-# Core package (In-memory, SQLite, and Redis support)
+# Minimal core — in-memory routing only (numpy + scipy)
 uv pip install bayesian-cortex
 
-# Install with local embedding support
-uv pip install "bayesian-cortex[local-ml]"
-```
+# With persistent SQLite storage
+uv pip install "bayesian-cortex[sqlite]"
 
-For advanced features, ensure the following database dependencies are satisfied:
-* `sqlite-vec` (Required for SQLite vector stores)
-* `aiosqlite` (Required for asynchronous SQLite operations)
-* `redis` (Required for Redis cache storage)
-* `httpx` (Required for API-based embedders)
+# With SQLite ANN vector search (sqlite-vec)
+uv pip install "bayesian-cortex[sqlite-vec]"
+
+# With Redis storage
+uv pip install "bayesian-cortex[redis]"
+
+# With MCP server support
+uv pip install "bayesian-cortex[mcp]"
+
+# With async Gemini / OpenAI embedders
+uv pip install "bayesian-cortex[async-embeddings]"
+
+# With local sentence-transformers embedder
+uv pip install "bayesian-cortex[local-ml]"
+
+# Everything at once
+uv pip install "bayesian-cortex[all]"
+```
 
 ---
 
