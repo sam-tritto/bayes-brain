@@ -96,9 +96,9 @@ def calculate_faithfulness(
     resp_tokens = {t for t in resp_tokens if t not in exclude}
 
     if not resp_tokens:
-        # If response contains no meaningful tokens (e.g. only stop words or empty),
-        # return 1.0 to avoid division by zero.
-        return 1.0
+        # Response contains no meaningful tokens (all stop words or empty).
+        # Return 0.0 — a content-free response has no faithfulness to the source.
+        return 0.0
 
     # Tokenize source chunks
     source_text = " ".join(source_chunks)

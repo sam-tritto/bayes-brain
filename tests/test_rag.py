@@ -69,7 +69,7 @@ def test_calculate_faithfulness():
 
     # Empty response
     assert calculate_faithfulness("", source) == 0.0
-    assert calculate_faithfulness("the a", source) == 1.0  # Only stop words, default to 1.0
+    assert calculate_faithfulness("the a", source) == 0.0  # Only stop words → no meaningful content → 0.0
 
 
 def test_evaluate_rag_success():
@@ -86,6 +86,21 @@ def test_evaluate_rag_success():
     # source tokens: {"employees", "get", "4", "weeks", "paid", "vacation", "yearly"}
     # Overlap = 0.0
     assert evaluate_rag_success("We have unlimited sick leave.", source, faithfulness_threshold=0.5) is False
+
+
+def test_evaluate_rag_success_stop_word_only_response():
+    """Regression: a response made entirely of stop words must NOT score 1.0 faithfulness.
+
+    Strings like "I will not do that" collapse to zero meaningful tokens after
+    stop-word filtering. The old code returned 1.0 in that case to avoid
+    division-by-zero, which incorrectly caused evaluate_rag_success to return
+    True and rewarded the bandit for a useless answer.
+    """
+    source = "Employees get 4 weeks of paid vacation yearly."
+    stop_word_response = "I will not do that"
+
+    assert calculate_faithfulness(stop_word_response, source) == 0.0
+    assert evaluate_rag_success(stop_word_response, source, faithfulness_threshold=0.5) is False
 
 
 def test_evaluate_rag_success_custom_parameters():
