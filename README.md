@@ -3,8 +3,9 @@
   <br>
   <br>
   <a href="https://pypi.org/project/bayesian_cortex/"><img src="https://img.shields.io/pypi/v/bayesian_cortex.svg" alt="PyPI version"></a>
+  <a href="https://github.com/sam-tritto/bayesian-cortex/actions/workflows/ci.yml"><img src="https://github.com/sam-tritto/bayesian-cortex/actions/workflows/ci.yml/badge.svg" alt="CI Status"></a>
+  <a href="https://codecov.io/gh/sam-tritto/bayesian-cortex"><img src="https://codecov.io/gh/sam-tritto/bayesian-cortex/graph/badge.svg" alt="Coverage"></a>
   <a href="https://docs.astral.sh/uv/"><img src="https://img.shields.io/badge/uv-%23DE5FE9.svg?style=flat&logo=uv&logoColor=white" alt="uv"></a>
-  <a href="https://github.com/sam-tritto/bayesian-cortex"><img src="https://img.shields.io/badge/coverage-61%25-yellow.svg" alt="Coverage Status"></a>
   <a href="https://opensource.org/licenses/MIT"><img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="License: MIT"></a>
 </p>
 
