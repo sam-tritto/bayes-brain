@@ -33,8 +33,8 @@ class MockEmbedder:
         return [0.0, 1.0]
 
 
-def test_router_without_embeddings():
-    storage = InMemoryStorage()
+def test_router_without_embeddings(mem_storage):
+    storage = mem_storage
     router = BayesianRouter(storage=storage, decay_factor=0.95)
 
     # Route should select from candidate tools
@@ -57,8 +57,8 @@ def test_router_without_embeddings():
     assert b_fail == pytest.approx(1.95)
 
 
-def test_router_with_embeddings():
-    storage = InMemoryStorage()
+def test_router_with_embeddings(mem_storage):
+    storage = mem_storage
     embedder = MockEmbedder()
     router = BayesianRouter(
         storage=storage,
@@ -82,8 +82,8 @@ def test_router_with_embeddings():
     assert context_key_1 != context_key_search
 
 
-def test_router_trace_feedback():
-    storage = InMemoryStorage()
+def test_router_trace_feedback(mem_storage):
+    storage = mem_storage
     router = BayesianRouter(storage=storage)
 
     chosen_candidate, trace_id = router.route_with_trace("context_a", ["tool_x"])
@@ -99,8 +99,8 @@ def test_router_trace_feedback():
     assert beta == 1.0
 
 
-def test_router_priors_seeding():
-    storage = InMemoryStorage()
+def test_router_priors_seeding(mem_storage):
+    storage = mem_storage
     priors = {
         "highly_reliable": (90.0, 10.0),
         "unreliable": (1.0, 99.0)
@@ -133,8 +133,8 @@ class CustomMemoryVectorStore:
         return None
 
 
-def test_router_with_custom_vector_store():
-    storage = InMemoryStorage()
+def test_router_with_custom_vector_store(mem_storage):
+    storage = mem_storage
     embedder = MockEmbedder()
     custom_store = CustomMemoryVectorStore()
     
@@ -156,8 +156,8 @@ def test_router_with_custom_vector_store():
     assert custom_store.get_nearest_context([1.0, 0.0]) == context_key
 
 
-def test_router_exact_match_hashing_and_normalization():
-    storage = InMemoryStorage()
+def test_router_exact_match_hashing_and_normalization(mem_storage):
+    storage = mem_storage
     router = BayesianRouter(storage=storage)
 
     # Clean query
@@ -178,12 +178,12 @@ def test_router_exact_match_hashing_and_normalization():
     assert key1 != key_other
 
 
-def test_router_embedder_failure_fallback_hashing(caplog):
+def test_router_embedder_failure_fallback_hashing(caplog, mem_storage):
     class CrashingEmbedder:
         def embed_query(self, text: str):
             raise ValueError("Embedding engine offline")
 
-    storage = InMemoryStorage()
+    storage = mem_storage
     router = BayesianRouter(storage=storage, embedder=CrashingEmbedder())
 
     with caplog.at_level("WARNING"):
@@ -195,8 +195,8 @@ def test_router_embedder_failure_fallback_hashing(caplog):
     assert any("Failed to generate embedding for context" in w for w in warnings)
 
 
-def test_router_no_embedder_warning(caplog):
-    storage = InMemoryStorage()
+def test_router_no_embedder_warning(caplog, mem_storage):
+    storage = mem_storage
     with caplog.at_level("WARNING"):
         BayesianRouter(storage=storage)
     
@@ -204,8 +204,8 @@ def test_router_no_embedder_warning(caplog):
     assert any("No ContextEmbedder provided" in w for w in warnings)
 
 
-def test_continuous_rewards():
-    storage = InMemoryStorage()
+def test_continuous_rewards(mem_storage):
+    storage = mem_storage
     router = BayesianRouter(storage=storage, decay_factor=0.95)
 
     # Resolve context key
@@ -247,9 +247,9 @@ def test_continuous_rewards():
     router.feedback("continuous_task", "tool_a", success=False, reward=0.0)
 
 
-def test_router_fallback_on_storage_failure(monkeypatch):
+def test_router_fallback_on_storage_failure(monkeypatch, mem_storage):
     import numpy as np
-    storage = InMemoryStorage()
+    storage = mem_storage
     
     # Mock storage to fail on get_candidate_params
     def mock_get_candidate_params(context_key, candidate_name):
@@ -280,9 +280,9 @@ def test_router_fallback_on_storage_failure(monkeypatch):
     assert chosen_first == "tool_a"
 
 
-def test_router_fallback_on_sampling_failure(monkeypatch):
+def test_router_fallback_on_sampling_failure(monkeypatch, mem_storage):
     import numpy as np
-    storage = InMemoryStorage()
+    storage = mem_storage
     
     # Mock numpy.random.beta to fail
     def mock_beta(a, b):
@@ -304,14 +304,14 @@ def test_router_fallback_on_sampling_failure(monkeypatch):
     assert telemetry_events[0][0] == "route_failure"
 
 
-def test_router_fallback_on_vector_store_failure():
+def test_router_fallback_on_vector_store_failure(mem_storage):
     class FailingVectorStore:
         def add_context(self, context_key, vector):
             pass
         def get_nearest_context(self, query_vector, similarity_threshold):
             raise RuntimeError("Index corrupted")
 
-    storage = InMemoryStorage()
+    storage = mem_storage
     embedder = MockEmbedder()
     
     telemetry_events = []
@@ -331,8 +331,8 @@ def test_router_fallback_on_vector_store_failure():
     assert telemetry_events[0][0] == "route_failure"
 
 
-def test_feedback_fallback_on_failure(monkeypatch):
-    storage = InMemoryStorage()
+def test_feedback_fallback_on_failure(monkeypatch, mem_storage):
+    storage = mem_storage
     
     # Mock storage to fail on decay_and_update
     def mock_decay_and_update(context_key, candidate_name, decay_factor, reward_val):
@@ -377,9 +377,9 @@ def test_feedback_fallback_on_failure(monkeypatch):
     assert telemetry_events[2][0] == "get_candidate_beliefs_failure"
 
 
-def test_router_signed_trace_ids():
+def test_router_signed_trace_ids(mem_storage):
     import pytest
-    storage = InMemoryStorage()
+    storage = mem_storage
     
     # 1. Custom secret key (str)
     router = BayesianRouter(storage=storage, secret_key="my_super_secret_key")
@@ -428,8 +428,8 @@ def test_router_signed_trace_ids():
         router_random2._decode_trace_id(trace_id_rand)
 
 
-def test_router_contextual_priors():
-    storage = InMemoryStorage()
+def test_router_contextual_priors(mem_storage):
+    storage = mem_storage
     
     # 1. Validation test
     with pytest.raises(ValueError, match="Each contextual prior must contain a 'priors' dictionary"):

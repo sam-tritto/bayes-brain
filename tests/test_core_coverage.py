@@ -368,8 +368,8 @@ class TestVectorContextStoreEdgeCases:
 # ===========================================================================
 
 class TestInMemoryStorageLinear:
-    def test_decay_and_update_linear_diagonal(self):
-        storage = InMemoryStorage()
+    def test_decay_and_update_linear_diagonal(self, mem_storage):
+        storage = mem_storage
         x = np.array([1.0, 0.0, 1.0], dtype=np.float32)
         p1, r1 = storage.decay_and_update_linear("cand_a", 1.0, 1.0, x, 1.0, 0.5, diagonal=True)
         assert p1 is not None
@@ -377,8 +377,8 @@ class TestInMemoryStorageLinear:
         p2, r2 = storage.decay_and_update_linear("cand_a", 0.9, 0.0, x, 1.0, 0.5, diagonal=True)
         assert np.all(p2 > 0)
 
-    def test_decay_and_update_linear_full_matrix(self):
-        storage = InMemoryStorage()
+    def test_decay_and_update_linear_full_matrix(self, mem_storage):
+        storage = mem_storage
         x = np.array([1.0, 0.0, 1.0], dtype=np.float32)
         p1, r1 = storage.decay_and_update_linear("cand_b", 1.0, 1.0, x, 1.0, 0.5, diagonal=False)
         assert p1.shape == (3, 3)
@@ -386,14 +386,14 @@ class TestInMemoryStorageLinear:
         eigvals = np.linalg.eigvalsh(p1)
         assert np.all(eigvals > 0)
 
-    def test_get_linear_params_returns_none_when_missing(self):
-        storage = InMemoryStorage()
+    def test_get_linear_params_returns_none_when_missing(self, mem_storage):
+        storage = mem_storage
         p, r = storage.get_linear_params("nonexistent")
         assert p is None
         assert r is None
 
-    def test_get_linear_params_returns_copy_not_reference(self):
-        storage = InMemoryStorage()
+    def test_get_linear_params_returns_copy_not_reference(self, mem_storage):
+        storage = mem_storage
         x = np.array([1.0, 0.0, 1.0], dtype=np.float32)
         storage.decay_and_update_linear("cand", 1.0, 1.0, x, 1.0, 0.5, diagonal=True)
         p1, _ = storage.get_linear_params("cand")
@@ -401,8 +401,8 @@ class TestInMemoryStorageLinear:
         p2, _ = storage.get_linear_params("cand")
         assert not np.all(p2 == 999.0)  # internal state should be unaffected
 
-    def test_decay_and_update_linear_batch(self):
-        storage = InMemoryStorage()
+    def test_decay_and_update_linear_batch(self, mem_storage):
+        storage = mem_storage
         x = np.array([1.0, 0.0, 1.0], dtype=np.float32)
         updates = [
             ("cand_x", 1.0, 1.0, x, 1.0, 0.5, True),
@@ -451,10 +451,10 @@ class TestBaseStorageFallbackBatch:
     (which doesn't override them at the base level for all paths).
     """
 
-    def test_base_get_candidate_params_batch_fallback(self):
+    def test_base_get_candidate_params_batch_fallback(self, mem_storage):
         # Create a minimal storage that doesn't override the batch methods
         from bayesian_cortex.storage import BaseStorage
-        storage = InMemoryStorage()
+        storage = mem_storage
         storage.update_candidate_params("ctx_x", "tool_a", 5.0, 3.0)
         keys = [("ctx_x", "tool_a"), ("ctx_x", "tool_b")]
         # Call the BaseStorage-level batch method directly
@@ -462,9 +462,9 @@ class TestBaseStorageFallbackBatch:
         assert result[("ctx_x", "tool_a")] == (5.0, 3.0)
         assert result[("ctx_x", "tool_b")] == (1.0, 1.0)
 
-    def test_base_save_vectors_fallback(self):
+    def test_base_save_vectors_fallback(self, mem_storage):
         from bayesian_cortex.storage import BaseStorage
-        storage = InMemoryStorage()
+        storage = mem_storage
         BaseStorage.save_vectors(storage, {"k1": [1.0, 2.0], "k2": [3.0, 4.0]})
         vecs = storage.load_all_vectors()
         assert vecs["k1"] == [1.0, 2.0]
@@ -655,9 +655,9 @@ class TestFeedbackStrictMode:
         assert result == (1.0, 1.0)
 
     @pytest.mark.anyio
-    async def test_afeedback_strict_true_raises(self):
+    async def test_afeedback_strict_true_raises(self, async_mem_storage):
         """Async variant: afeedback(strict=True) should also re-raise."""
-        storage = AsyncInMemoryStorage()
+        storage = async_mem_storage
         from unittest.mock import AsyncMock
         storage.decay_and_update = AsyncMock(side_effect=RuntimeError("async DB locked"))
         router = AsyncBayesianRouter(storage=storage)
@@ -665,8 +665,8 @@ class TestFeedbackStrictMode:
             await router.afeedback("ctx", "tool_a", success=True, strict=True)
 
     @pytest.mark.anyio
-    async def test_afeedback_strict_false_swallows(self):
-        storage = AsyncInMemoryStorage()
+    async def test_afeedback_strict_false_swallows(self, async_mem_storage):
+        storage = async_mem_storage
         from unittest.mock import AsyncMock
         storage.decay_and_update = AsyncMock(side_effect=RuntimeError("async DB locked"))
         router = AsyncBayesianRouter(storage=storage)

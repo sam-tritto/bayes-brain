@@ -8,8 +8,8 @@ import pytest
 from bayesian_cortex.storage import InMemoryStorage, RedisStorage, SQLiteStorage
 
 
-def test_in_memory_storage():
-    storage = InMemoryStorage()
+def test_in_memory_storage(mem_storage):
+    storage = mem_storage
     
     # Defaults
     alpha, beta = storage.get_candidate_params("ctx_test", "tool_a")
@@ -40,45 +40,36 @@ def test_in_memory_storage():
     assert storage.load_metadata("missing") is None
 
 
-def test_sqlite_storage():
-    with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as tmp:
-        db_path = tmp.name
+def test_sqlite_storage(sqlite_storage):
+    storage = sqlite_storage
     
-    try:
-        storage = SQLiteStorage(db_path)
-        
-        # Test defaults
-        a, b = storage.get_candidate_params("ctx_1", "tool_1")
-        assert a == 1.0
-        assert b == 1.0
+    # Test defaults
+    a, b = storage.get_candidate_params("ctx_1", "tool_1")
+    assert a == 1.0
+    assert b == 1.0
 
-        # Test updates
-        storage.update_candidate_params("ctx_1", "tool_1", 10.0, 2.0)
-        a, b = storage.get_candidate_params("ctx_1", "tool_1")
-        assert a == 10.0
-        assert b == 2.0
+    # Test updates
+    storage.update_candidate_params("ctx_1", "tool_1", 10.0, 2.0)
+    a, b = storage.get_candidate_params("ctx_1", "tool_1")
+    assert a == 10.0
+    assert b == 2.0
 
-        # Test atomic decay and update
-        new_a, new_b = storage.decay_and_update("ctx_1", "tool_1", 0.9, 1.0)
-        assert new_a == 10.0 * 0.9 + 1.0
-        assert new_b == 2.0 * 0.9 + 0.0
+    # Test atomic decay and update
+    new_a, new_b = storage.decay_and_update("ctx_1", "tool_1", 0.9, 1.0)
+    assert new_a == 10.0 * 0.9 + 1.0
+    assert new_b == 2.0 * 0.9 + 0.0
 
-        # Verify decay lower-bounding (beta bimodality prevention)
-        # 1.8 * 0.1 + 0.0 = 0.18, should be capped at 1.0
-        new_a, new_b = storage.decay_and_update("ctx_1", "tool_1", 0.1, 0.0)
-        assert new_a == max(1.0, 10.0 * 0.1 + 0.0)
-        assert new_b == max(1.0, 1.8 * 0.1 + 1.0)
-        assert new_a == 1.0
+    # Verify decay lower-bounding (beta bimodality prevention)
+    # 1.8 * 0.1 + 0.0 = 0.18, should be capped at 1.0
+    new_a, new_b = storage.decay_and_update("ctx_1", "tool_1", 0.1, 0.0)
+    assert new_a == max(1.0, 10.0 * 0.1 + 0.0)
+    assert new_b == max(1.0, 1.8 * 0.1 + 1.0)
+    assert new_a == 1.0
 
-        # Test metadata persistence
-        storage.save_metadata("vector_data", "serialized_vector_json")
-        assert storage.load_metadata("vector_data") == "serialized_vector_json"
-        assert storage.load_metadata("nonexistent") is None
-
-        storage.close()
-    finally:
-        if os.path.exists(db_path):
-            os.remove(db_path)
+    # Test metadata persistence
+    storage.save_metadata("vector_data", "serialized_vector_json")
+    assert storage.load_metadata("vector_data") == "serialized_vector_json"
+    assert storage.load_metadata("nonexistent") is None
 
 
 def test_redis_storage():
@@ -236,9 +227,9 @@ def test_sqlite_storage_wal_and_timeout():
             os.remove(db_path)
 
 
-def test_storage_selection_logging():
+def test_storage_selection_logging(mem_storage, sqlite_storage):
     # Test InMemoryStorage logging
-    mem_store = InMemoryStorage()
+    mem_store = mem_storage
     mem_store.log_selection("trace_mem_1", "ctx_mem", "tool_a")
     logs = mem_store.get_selection_logs()
     assert len(logs) == 1
@@ -252,25 +243,17 @@ def test_storage_selection_logging():
     assert logs_updated[0]["reward"] == 1.0
 
     # Test SQLiteStorage logging
-    with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as tmp:
-        db_path = tmp.name
-    try:
-        sql_store = SQLiteStorage(db_path)
-        sql_store.log_selection("trace_sql_1", "ctx_sql", "tool_b")
-        logs = sql_store.get_selection_logs()
-        assert len(logs) == 1
-        assert logs[0]["trace_id"] == "trace_sql_1"
-        assert logs[0]["context_key"] == "ctx_sql"
-        assert logs[0]["candidate_name"] == "tool_b"
-        assert logs[0]["reward"] is None
+    sql_store = sqlite_storage
+    sql_store.log_selection("trace_sql_1", "ctx_sql", "tool_b")
+    logs = sql_store.get_selection_logs()
+    assert len(logs) == 1
+    assert logs[0]["trace_id"] == "trace_sql_1"
+    assert logs[0]["context_key"] == "ctx_sql"
+    assert logs[0]["candidate_name"] == "tool_b"
+    assert logs[0]["reward"] is None
 
-        sql_store.log_feedback("trace_sql_1", 0.0)
-        logs_updated = sql_store.get_selection_logs()
-        assert logs_updated[0]["reward"] == 0.0
-        
-        sql_store.close()
-    finally:
-        if os.path.exists(db_path):
-            os.remove(db_path)
+    sql_store.log_feedback("trace_sql_1", 0.0)
+    logs_updated = sql_store.get_selection_logs()
+    assert logs_updated[0]["reward"] == 0.0
 
 

@@ -37,9 +37,9 @@ def test_hybrid_initialization_validation():
     assert router.mode == "lints"
 
 
-def test_hybrid_routing_and_convergence():
-    embedder = SimpleMockEmbedder()
-    storage = InMemoryStorage()
+def test_hybrid_routing_and_convergence(mem_storage, det_embedder):
+    storage = mem_storage
+    embedder = det_embedder
     
     candidate_embeddings = {
         "tool_math": [1.0, 0.0],
@@ -74,13 +74,9 @@ def test_hybrid_routing_and_convergence():
     assert uncertainty_val < 0.5
 
 
-def test_hybrid_generalization_cold_start():
-    """
-    Test that a newly added tool can generalize performance instantly
-    based on its embedding similarity to an already trained tool.
-    """
-    embedder = SimpleMockEmbedder()
-    storage = InMemoryStorage()
+def test_hybrid_generalization_cold_start(mem_storage, det_embedder):
+    storage = mem_storage
+    embedder = det_embedder
     
     # 2D tool embeddings: dimension 0 is math-related, dimension 1 is other-related
     candidate_embeddings = {
@@ -115,10 +111,10 @@ def test_hybrid_generalization_cold_start():
     assert all(c == "tool_math_v2" for c in choices)
 
 
-def test_hybrid_metadata_string_embedding():
+def test_hybrid_metadata_string_embedding(mem_storage, det_embedder):
     """Verify tool metadata string dynamic embedding support."""
-    embedder = SimpleMockEmbedder()
-    storage = InMemoryStorage()
+    storage = mem_storage
+    embedder = det_embedder
     
     candidate_metadata = {
         "tool_math": "solve calculus math",
@@ -144,9 +140,9 @@ def test_hybrid_metadata_string_embedding():
     assert "tool_other" in router._candidate_embedding_cache
 
 
-def test_hybrid_batch_routing_and_feedback():
-    embedder = SimpleMockEmbedder()
-    storage = InMemoryStorage()
+def test_hybrid_batch_routing_and_feedback(mem_storage, det_embedder):
+    storage = mem_storage
+    embedder = det_embedder
     
     candidate_embeddings = {
         "tool_math": [1.0, 0.0],
@@ -176,10 +172,9 @@ def test_hybrid_batch_routing_and_feedback():
 
 
 @pytest.mark.anyio
-async def test_async_hybrid_routing_and_feedback(tmp_path):
-    db_file = tmp_path / "test_async_hybrid.db"
-    storage = AsyncSQLiteStorage(db_path=str(db_file))
-    embedder = SimpleMockEmbedder()
+async def test_async_hybrid_routing_and_feedback(async_sqlite_storage, det_embedder):
+    storage = async_sqlite_storage
+    embedder = det_embedder
     
     candidate_embeddings = {
         "tool_math": [1.0, 0.0],
@@ -216,4 +211,4 @@ async def test_async_hybrid_routing_and_feedback(tmp_path):
     ]
     await router.afeedback_batch(feedbacks)
 
-    await storage.close()
+    # No manual close needed for fixture-managed storage

@@ -37,9 +37,9 @@ def test_linear_initialization_validation():
     assert router_ucb.diagonal_covariance is True
 
 
-def test_lints_routing_and_convergence():
-    embedder = SimpleMockEmbedder()
-    storage = InMemoryStorage()
+def test_lints_routing_and_convergence(mem_storage, det_embedder):
+    storage = mem_storage
+    embedder = det_embedder
     router = BayesianRouter(
         storage=storage,
         embedder=embedder,
@@ -70,9 +70,9 @@ def test_lints_routing_and_convergence():
     assert uncertainty_val < 0.5
 
 
-def test_lints_diagonal_covariance_routing():
-    embedder = SimpleMockEmbedder()
-    storage = InMemoryStorage()
+def test_lints_diagonal_covariance_routing(mem_storage, det_embedder):
+    storage = mem_storage
+    embedder = det_embedder
     router = BayesianRouter(
         storage=storage,
         embedder=embedder,
@@ -93,9 +93,9 @@ def test_lints_diagonal_covariance_routing():
     assert all(c == "tool_math" for c in final_choices)
 
 
-def test_linucb_routing_and_convergence():
-    embedder = SimpleMockEmbedder()
-    storage = InMemoryStorage()
+def test_linucb_routing_and_convergence(mem_storage, det_embedder):
+    storage = mem_storage
+    embedder = det_embedder
     router = BayesianRouter(
         storage=storage,
         embedder=embedder,
@@ -117,9 +117,9 @@ def test_linucb_routing_and_convergence():
     assert all(c == "tool_math" for c in final_choices)
 
 
-def test_linucb_diagonal_covariance():
-    embedder = SimpleMockEmbedder()
-    storage = InMemoryStorage()
+def test_linucb_diagonal_covariance(mem_storage, det_embedder):
+    storage = mem_storage
+    embedder = det_embedder
     router = BayesianRouter(
         storage=storage,
         embedder=embedder,
@@ -140,10 +140,10 @@ def test_linucb_diagonal_covariance():
     assert all(c == "tool_math" for c in final_choices)
 
 
-def test_linear_sqlite_storage(tmp_path):
+def test_linear_sqlite_storage(tmp_path, det_embedder):
     db_file = tmp_path / "test_linear.db"
     storage = SQLiteStorage(db_path=str(db_file))
-    embedder = SimpleMockEmbedder()
+    embedder = det_embedder
     
     router = BayesianRouter(
         storage=storage,
@@ -175,10 +175,9 @@ def test_linear_sqlite_storage(tmp_path):
 
 
 @pytest.mark.anyio
-async def test_async_lints_routing_and_feedback(tmp_path):
-    db_file = tmp_path / "test_async_linear.db"
-    storage = AsyncSQLiteStorage(db_path=str(db_file))
-    embedder = SimpleMockEmbedder()
+async def test_async_lints_routing_and_feedback(async_sqlite_storage, det_embedder):
+    storage = async_sqlite_storage
+    embedder = det_embedder
     
     router = AsyncBayesianRouter(
         storage=storage,
@@ -203,4 +202,4 @@ async def test_async_lints_routing_and_feedback(tmp_path):
     # Since tool_math always succeeds, it should start dominating
     assert "tool_math" in final_choices
     
-    await storage.close()
+    # No manual close needed for fixture-managed storage

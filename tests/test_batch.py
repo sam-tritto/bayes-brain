@@ -18,8 +18,8 @@ from bayesian_cortex.embeddings import LocalSentenceTransformerEmbedder
 from bayesian_cortex.router import BayesianRouter, AsyncBayesianRouter
 
 
-def test_in_memory_storage_batch():
-    storage = InMemoryStorage()
+def test_in_memory_storage_batch(mem_storage):
+    storage = mem_storage
     
     # Batch updates
     params = {
@@ -219,8 +219,8 @@ async def test_async_redis_storage_batch():
     assert res_decay == [(2.5, 3.5)]
 
 
-def test_router_batch_routing_clustering():
-    storage = InMemoryStorage()
+def test_router_batch_routing_clustering(mem_storage):
+    storage = mem_storage
     router = BayesianRouter(storage=storage)
     
     # Set tool priors to force deterministic/seeded behavior
@@ -255,8 +255,8 @@ def test_router_batch_routing_clustering():
 
 
 @pytest.mark.anyio
-async def test_async_router_batch_routing():
-    storage = AsyncInMemoryStorage()
+async def test_async_router_batch_routing(async_mem_storage):
+    storage = async_mem_storage
     router = AsyncBayesianRouter(storage=storage)
     
     router.priors = {"tool_a": (10.0, 2.0), "tool_b": (1.0, 10.0)}

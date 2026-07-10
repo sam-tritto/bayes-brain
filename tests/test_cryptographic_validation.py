@@ -11,13 +11,12 @@ from bayesian_cortex.router import BayesianRouter, AsyncBayesianRouter
 from bayesian_cortex.storage import InMemoryStorage, AsyncInMemoryStorage
 
 
-def test_sync_trace_id_manipulation():
+def test_sync_trace_id_manipulation(mem_storage):
     """
     Sync Test: Captures a valid trace_id, modifies a single character in the payload part,
     and asserts that feedback_by_trace raises a strict ValueError.
     """
-    storage = InMemoryStorage()
-    router = BayesianRouter(storage=storage, secret_key="secure_hmac_test_key")
+    router = BayesianRouter(storage=mem_storage, secret_key="secure_hmac_test_key")
     
     candidates = ["tool_a", "tool_b"]
     chosen, trace_id = router.route_with_trace("some_query", candidates)
@@ -47,13 +46,12 @@ def test_sync_trace_id_manipulation():
 
 
 @pytest.mark.anyio
-async def test_async_trace_id_manipulation():
+async def test_async_trace_id_manipulation(async_mem_storage):
     """
     Async Test: Captures a valid trace_id, modifies a single character in the payload part,
     and asserts that afeedback_by_trace raises a strict ValueError.
     """
-    storage = AsyncInMemoryStorage()
-    router = AsyncBayesianRouter(storage=storage, secret_key="secure_hmac_test_key")
+    router = AsyncBayesianRouter(storage=async_mem_storage, secret_key="secure_hmac_test_key")
     
     candidates = ["tool_a", "tool_b"]
     chosen, trace_id = await router.aroute_with_trace("some_query", candidates)

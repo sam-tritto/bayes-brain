@@ -22,8 +22,8 @@ from bayesian_cortex.storage import (
 
 
 @pytest.mark.anyio
-async def test_async_in_memory_storage():
-    storage = AsyncInMemoryStorage()
+async def test_async_in_memory_storage(async_mem_storage):
+    storage = async_mem_storage
 
     # Defaults
     alpha, beta = await storage.get_candidate_params("ctx_test", "tool_a")
@@ -191,8 +191,8 @@ class SyncMockEmbedder:
 
 
 @pytest.mark.anyio
-async def test_async_router_exact_match():
-    storage = AsyncInMemoryStorage()
+async def test_async_router_exact_match(async_mem_storage):
+    storage = async_mem_storage
     router = AsyncBayesianRouter(storage=storage, decay_factor=0.95)
 
     candidate_name = await router.aroute("web_search_query", ["search_api", "fallback_api"])
@@ -207,8 +207,8 @@ async def test_async_router_exact_match():
 
 
 @pytest.mark.anyio
-async def test_async_router_with_async_embedder():
-    storage = AsyncInMemoryStorage()
+async def test_async_router_with_async_embedder(async_mem_storage):
+    storage = async_mem_storage
     embedder = AsyncMockEmbedder()
     router = AsyncBayesianRouter(storage=storage, embedder=embedder)
 
@@ -221,8 +221,8 @@ async def test_async_router_with_async_embedder():
 
 
 @pytest.mark.anyio
-async def test_async_router_with_sync_embedder():
-    storage = AsyncInMemoryStorage()
+async def test_async_router_with_sync_embedder(async_mem_storage):
+    storage = async_mem_storage
     embedder = SyncMockEmbedder()
     router = AsyncBayesianRouter(storage=storage, embedder=embedder)
 
@@ -232,8 +232,8 @@ async def test_async_router_with_sync_embedder():
 
 
 @pytest.mark.anyio
-async def test_async_router_trace_feedback():
-    storage = AsyncInMemoryStorage()
+async def test_async_router_trace_feedback(async_mem_storage):
+    storage = async_mem_storage
     router = AsyncBayesianRouter(storage=storage)
 
     chosen_candidate, trace_id = await router.aroute_with_trace("context_a", ["tool_x"])
@@ -248,8 +248,8 @@ async def test_async_router_trace_feedback():
 
 
 @pytest.mark.anyio
-async def test_async_router_priors():
-    storage = AsyncInMemoryStorage()
+async def test_async_router_priors(async_mem_storage):
+    storage = async_mem_storage
     priors = {"highly_reliable": (90.0, 10.0), "unreliable": (1.0, 99.0)}
     router = AsyncBayesianRouter(storage=storage, priors=priors)
 
@@ -258,8 +258,8 @@ async def test_async_router_priors():
 
 
 @pytest.mark.anyio
-async def test_async_router_fallbacks(monkeypatch):
-    storage = AsyncInMemoryStorage()
+async def test_async_router_fallbacks(monkeypatch, async_mem_storage):
+    storage = async_mem_storage
     
     async def mock_get_candidate_params(context_key, candidate_name):
         raise RuntimeError("DB failure")
@@ -317,9 +317,9 @@ async def test_async_openai_embedder_rest(mock_httpx_client):
 
 
 @pytest.mark.anyio
-async def test_async_router_signed_trace_ids():
+async def test_async_router_signed_trace_ids(async_mem_storage):
     import pytest
-    storage = AsyncInMemoryStorage()
+    storage = async_mem_storage
     
     # 1. Custom secret key (str)
     router = AsyncBayesianRouter(storage=storage, secret_key="my_super_secret_key")
@@ -369,8 +369,8 @@ async def test_async_router_signed_trace_ids():
 
 
 @pytest.mark.anyio
-async def test_async_router_contextual_priors():
-    storage = AsyncInMemoryStorage()
+async def test_async_router_contextual_priors(async_mem_storage):
+    storage = async_mem_storage
     
     contextual_priors = [
         {

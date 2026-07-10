@@ -277,24 +277,17 @@ def test_sqlite_vector_store_missing_sqlite_vec(tmp_path):
             SQLiteVectorStore(db_path=db_file, dimension=3)
 
 
-def test_router_with_sqlite_vector_store(tmp_path):
+def test_router_with_sqlite_vector_store(tmp_path, mem_storage, det_embedder):
     from bayesian_cortex.router import BayesianRouter
-    from bayesian_cortex.storage import InMemoryStorage
     
-    class MockEmbedder:
-        def embed_query(self, text: str) -> list[float]:
-            if "search" in text.lower():
-                return [1.0, 0.0]
-            return [0.0, 1.0]
-
     db_file = str(tmp_path / "test_router_vec.db")
     vector_store = SQLiteVectorStore(db_path=db_file, dimension=2)
-    storage = InMemoryStorage()
+    storage = mem_storage
     
     try:
         router = BayesianRouter(
             storage=storage,
-            embedder=MockEmbedder(),
+            embedder=det_embedder,
             vector_store=vector_store,
             similarity_threshold=0.85
         )

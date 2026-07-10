@@ -47,9 +47,9 @@ def test_initialization_by_backend():
             os.remove(db_path_async)
 
 
-def test_conflict_raise():
+def test_conflict_raise(mem_storage):
     # Specifying both storage and storage_backend should raise ValueError
-    storage = InMemoryStorage()
+    storage = mem_storage
     with pytest.raises(ValueError, match="Cannot specify both"):
         BayesianRouter(storage=storage, storage_backend="memory")
 
