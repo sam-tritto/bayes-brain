@@ -614,10 +614,17 @@ class BayesianRouter:
         success: Optional[bool] = None,
         reward: Optional[float] = None,
         context_key: Optional[str] = None,
+        strict: bool = False,
     ) -> Tuple[float, float]:
         """
         Directly submit candidate execution feedback using the raw context string.
         Either success (boolean) or reward (float between 0.0 and 1.0) must be provided.
+
+        Args:
+            strict: If True, any storage or runtime exception is re-raised immediately
+                instead of being swallowed. Use this when a missed feedback write should
+                be treated as a hard failure (e.g., in tests or critical pipelines).
+                Mirrors the ``strict`` parameter on :meth:`feedback_by_trace`.
         """
         resolved_context = context_text if context_text is not None else context_key
         if resolved_context is None:
@@ -720,6 +727,8 @@ class BayesianRouter:
                 return expected_reward, uncertainty
 
         except Exception as e:
+            if strict:
+                raise
             logger.exception("BayesianRouter feedback submission failed.")
             if self.telemetry_hook:
                 try:
@@ -2010,6 +2019,7 @@ class AsyncBayesianRouter:
         success: Optional[bool] = None,
         reward: Optional[float] = None,
         context_key: Optional[str] = None,
+        strict: bool = False,
     ) -> Tuple[float, float]:
         resolved_context = context_text if context_text is not None else context_key
         if resolved_context is None:
@@ -2126,6 +2136,8 @@ class AsyncBayesianRouter:
                 return expected_reward, uncertainty
 
         except Exception as e:
+            if strict:
+                raise
             logger.exception("AsyncBayesianRouter feedback submission failed.")
             await self._call_telemetry(
                 "feedback_failure",

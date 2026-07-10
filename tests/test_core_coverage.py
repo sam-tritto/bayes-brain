@@ -589,3 +589,86 @@ class TestManualBeliefReset:
         alpha_after, beta_after = mem_storage.get_candidate_params(key, "tool_a")
         assert alpha_after == 1.0
         assert beta_after == 1.0
+
+
+# ===========================================================================
+# feedback() strict= mode
+# ===========================================================================
+
+class TestFeedbackStrictMode:
+    """
+    Verify that feedback(strict=True) re-raises storage exceptions instead of
+    silently returning (1.0, 1.0).
+    """
+
+    def _make_crashing_storage(self):
+        """Return an InMemoryStorage whose decay_and_update always raises."""
+        from unittest.mock import patch, MagicMock
+        storage = InMemoryStorage()
+        storage.decay_and_update = MagicMock(
+            side_effect=RuntimeError("DB locked")
+        )
+        return storage
+
+    def test_feedback_strict_false_swallows_error(self):
+        storage = self._make_crashing_storage()
+        router = BayesianRouter(storage=storage)
+        # Should NOT raise — swallows and returns sentinel (1.0, 1.0)
+        result = router.feedback("ctx", "tool_a", success=True, strict=False)
+        assert result == (1.0, 1.0)
+
+    def test_feedback_strict_true_raises(self):
+        storage = self._make_crashing_storage()
+        router = BayesianRouter(storage=storage)
+        with pytest.raises(RuntimeError, match="DB locked"):
+            router.feedback("ctx", "tool_a", success=True, strict=True)
+
+    def test_feedback_strict_default_is_false(self):
+        """strict defaults to False — existing callers are unaffected."""
+        storage = self._make_crashing_storage()
+        router = BayesianRouter(storage=storage)
+        # No keyword needed — should silently return (1.0, 1.0)
+        result = router.feedback("ctx", "tool_a", success=True)
+        assert result == (1.0, 1.0)
+
+    def test_feedback_strict_true_with_lints_embedder_crash(self, det_embedder, mem_storage):
+        """Crash inside embedder call is also re-raised when strict=True."""
+        from unittest.mock import patch
+        router = BayesianRouter(
+            storage=mem_storage,
+            embedder=det_embedder,
+            mode="lints",
+        )
+        with patch.object(det_embedder, "embed_query", side_effect=RuntimeError("embed offline")):
+            with pytest.raises(RuntimeError, match="embed offline"):
+                router.feedback("math ctx", "tool_a", success=True, strict=True)
+
+    def test_feedback_strict_false_with_lints_embedder_crash(self, det_embedder, mem_storage):
+        from unittest.mock import patch
+        router = BayesianRouter(
+            storage=mem_storage,
+            embedder=det_embedder,
+            mode="lints",
+        )
+        with patch.object(det_embedder, "embed_query", side_effect=RuntimeError("embed offline")):
+            result = router.feedback("math ctx", "tool_a", success=True, strict=False)
+        assert result == (1.0, 1.0)
+
+    @pytest.mark.anyio
+    async def test_afeedback_strict_true_raises(self):
+        """Async variant: afeedback(strict=True) should also re-raise."""
+        storage = AsyncInMemoryStorage()
+        from unittest.mock import AsyncMock
+        storage.decay_and_update = AsyncMock(side_effect=RuntimeError("async DB locked"))
+        router = AsyncBayesianRouter(storage=storage)
+        with pytest.raises(RuntimeError, match="async DB locked"):
+            await router.afeedback("ctx", "tool_a", success=True, strict=True)
+
+    @pytest.mark.anyio
+    async def test_afeedback_strict_false_swallows(self):
+        storage = AsyncInMemoryStorage()
+        from unittest.mock import AsyncMock
+        storage.decay_and_update = AsyncMock(side_effect=RuntimeError("async DB locked"))
+        router = AsyncBayesianRouter(storage=storage)
+        result = await router.afeedback("ctx", "tool_a", success=True, strict=False)
+        assert result == (1.0, 1.0)
