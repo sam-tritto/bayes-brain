@@ -494,7 +494,12 @@ def create_mcp_server(
             beliefs = {}
             for candidate_name in available_candidates:
                 alpha, beta = await router.storage.get_candidate_params(context_key, candidate_name)
-                if alpha == 1.0 and beta == 1.0:
+                # Use an explicit existence check rather than value equality to detect cold
+                # start. After a failure with decay_factor=1.0 the params legitimately
+                # remain at the floor (1.0, 1.0), which is indistinguishable from a
+                # candidate that has never been observed if we only compare values.
+                is_cold_start = not await router.storage.ahas_candidate_params(context_key, candidate_name)
+                if is_cold_start:
                     if hasattr(router, "get_prior"):
                         import inspect
                         if inspect.iscoroutinefunction(router.get_prior):

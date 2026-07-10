@@ -21,6 +21,19 @@ class BaseStorage(abc.ABC):
         pass
 
     @abc.abstractmethod
+    def has_candidate_params(self, context_key: str, candidate_name: str) -> bool:
+        """
+        Return True if the candidate has ever been observed under the given context
+        (i.e. a record exists in storage), False otherwise.
+
+        This must NOT be inferred from the parameter values alone. After a failure
+        with decay_factor=1.0 the parameters legitimately remain at the floor (1.0, 1.0),
+        which is identical to the cold-start default. Only an explicit existence check
+        can distinguish the two states.
+        """
+        pass
+
+    @abc.abstractmethod
     def update_candidate_params(
         self, context_key: str, candidate_name: str, alpha: float, beta: float
     ) -> None:
@@ -210,6 +223,10 @@ class InMemoryStorage(BaseStorage):
     def get_candidate_params(self, context_key: str, candidate_name: str) -> Tuple[float, float]:
         with self._lock:
             return self._data.get((context_key, candidate_name), (1.0, 1.0))
+
+    def has_candidate_params(self, context_key: str, candidate_name: str) -> bool:
+        with self._lock:
+            return (context_key, candidate_name) in self._data
 
     def update_candidate_params(
         self, context_key: str, candidate_name: str, alpha: float, beta: float
@@ -501,6 +518,15 @@ class SQLiteStorage(BaseStorage):
         if row is not None:
             return float(row[0]), float(row[1])
         return 1.0, 1.0
+
+    def has_candidate_params(self, context_key: str, candidate_name: str) -> bool:
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT 1 FROM candidate_params WHERE context_key = ? AND candidate_name = ? LIMIT 1",
+            (context_key, candidate_name),
+        )
+        return cursor.fetchone() is not None
 
     def update_candidate_params(
         self, context_key: str, candidate_name: str, alpha: float, beta: float
@@ -967,6 +993,10 @@ class RedisStorage(BaseStorage):
         beta = float(beta_val) if beta_val is not None else 1.0
         return alpha, beta
 
+    def has_candidate_params(self, context_key: str, candidate_name: str) -> bool:
+        key = self._get_key(context_key)
+        return bool(self.client.hexists(key, f"{candidate_name}:alpha"))
+
     def update_candidate_params(
         self, context_key: str, candidate_name: str, alpha: float, beta: float
     ) -> None:
@@ -1305,6 +1335,19 @@ class AsyncBaseStorage(abc.ABC):
         pass
 
     @abc.abstractmethod
+    async def ahas_candidate_params(self, context_key: str, candidate_name: str) -> bool:
+        """
+        Return True if the candidate has ever been observed under the given context
+        (i.e. a record exists in storage), False otherwise.
+
+        This must NOT be inferred from the parameter values alone. After a failure
+        with decay_factor=1.0 the parameters legitimately remain at the floor (1.0, 1.0),
+        which is identical to the cold-start default. Only an explicit existence check
+        can distinguish the two states.
+        """
+        pass
+
+    @abc.abstractmethod
     async def update_candidate_params(
         self, context_key: str, candidate_name: str, alpha: float, beta: float
     ) -> None:
@@ -1499,6 +1542,10 @@ class AsyncInMemoryStorage(AsyncBaseStorage):
     async def get_candidate_params(self, context_key: str, candidate_name: str) -> Tuple[float, float]:
         async with self._lock:
             return self._data.get((context_key, candidate_name), (1.0, 1.0))
+
+    async def ahas_candidate_params(self, context_key: str, candidate_name: str) -> bool:
+        async with self._lock:
+            return (context_key, candidate_name) in self._data
 
     async def update_candidate_params(
         self, context_key: str, candidate_name: str, alpha: float, beta: float
@@ -1881,6 +1928,18 @@ class AsyncSQLiteStorage(AsyncBaseStorage):
                     if row is not None:
                         return float(row[0]), float(row[1])
                     return 1.0, 1.0
+        return await self._execute_with_retry(_run)
+
+    async def ahas_candidate_params(self, context_key: str, candidate_name: str) -> bool:
+        await self._ensure_initialized()
+        async def _run():
+            async with self._pool.connection() as conn:
+                async with conn.execute(
+                    "SELECT 1 FROM candidate_params WHERE context_key = ? AND candidate_name = ? LIMIT 1",
+                    (context_key, candidate_name),
+                ) as cursor:
+                    row = await cursor.fetchone()
+                    return row is not None
         return await self._execute_with_retry(_run)
 
     async def update_candidate_params(
@@ -2387,6 +2446,10 @@ class AsyncRedisStorage(AsyncBaseStorage):
         alpha = float(alpha_val) if alpha_val is not None else 1.0
         beta = float(beta_val) if beta_val is not None else 1.0
         return alpha, beta
+
+    async def ahas_candidate_params(self, context_key: str, candidate_name: str) -> bool:
+        key = self._get_key(context_key)
+        return bool(await self.client.hexists(key, f"{candidate_name}:alpha"))
 
     async def update_candidate_params(
         self, context_key: str, candidate_name: str, alpha: float, beta: float

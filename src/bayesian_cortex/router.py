@@ -465,8 +465,8 @@ class BayesianRouter:
                 for candidate_name in candidates:
                     alpha, beta = self.storage.get_candidate_params(context_key, candidate_name)
 
-                    # Check for seeded priors on cold start
-                    if alpha == 1.0 and beta == 1.0:
+                    # Seed priors on cold start (candidate never observed in this context)
+                    if not self.storage.has_candidate_params(context_key, candidate_name):
                         prior_alpha, prior_beta = self.get_prior(context_text, candidate_name)
                         if prior_alpha != 1.0 or prior_beta != 1.0:
                             alpha, beta = prior_alpha, prior_beta
@@ -951,7 +951,7 @@ class BayesianRouter:
             context_key = self._resolve_context_key(context_text)
             if self.mode == "clustering":
                 alpha, beta = self.storage.get_candidate_params(context_key, candidate_name)
-                if alpha == 1.0 and beta == 1.0:
+                if not self.storage.has_candidate_params(context_key, candidate_name):
                     alpha, beta = self.get_prior(context_text, candidate_name)
                 return alpha, beta
             elif self.hybrid:
@@ -1108,7 +1108,7 @@ class BayesianRouter:
                     for candidate_name in candidates:
                         alpha, beta = param_dict.get((context_key, candidate_name), (1.0, 1.0))
 
-                        if alpha == 1.0 and beta == 1.0:
+                        if not self.storage.has_candidate_params(context_key, candidate_name):
                             prior_alpha, prior_beta = self.get_prior(context_text, candidate_name)
                             if prior_alpha != 1.0 or prior_beta != 1.0:
                                 alpha, beta = prior_alpha, prior_beta
@@ -1910,7 +1910,8 @@ class AsyncBayesianRouter:
                 for candidate_name in candidates:
                     alpha, beta = await self.storage.get_candidate_params(context_key, candidate_name)
 
-                    if alpha == 1.0 and beta == 1.0:
+                    # Seed priors on cold start (candidate never observed in this context)
+                    if not await self.storage.ahas_candidate_params(context_key, candidate_name):
                         prior_alpha, prior_beta = await self.get_prior(context_text, candidate_name)
                         if prior_alpha != 1.0 or prior_beta != 1.0:
                             alpha, beta = prior_alpha, prior_beta
@@ -2393,7 +2394,7 @@ class AsyncBayesianRouter:
             context_key = await self._resolve_context_key(context_text)
             if self.mode == "clustering":
                 alpha, beta = await self.storage.get_candidate_params(context_key, candidate_name)
-                if alpha == 1.0 and beta == 1.0:
+                if not await self.storage.ahas_candidate_params(context_key, candidate_name):
                     alpha, beta = await self.get_prior(context_text, candidate_name)
                 return alpha, beta
             elif self.hybrid:
@@ -2566,7 +2567,7 @@ class AsyncBayesianRouter:
                     for candidate_name in candidates:
                         alpha, beta = param_dict.get((context_key, candidate_name), (1.0, 1.0))
 
-                        if alpha == 1.0 and beta == 1.0:
+                        if not await self.storage.ahas_candidate_params(context_key, candidate_name):
                             prior_alpha, prior_beta = await self.get_prior(context_text, candidate_name)
                             if prior_alpha != 1.0 or prior_beta != 1.0:
                                 alpha, beta = prior_alpha, prior_beta
