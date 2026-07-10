@@ -148,12 +148,32 @@ async def test_async_redis_storage():
 async def test_async_vector_context_store():
     store = AsyncVectorContextStore()
 
+    # Query on empty store
+    assert await store.aget_nearest_context([1.0, 0.0, 0.0], 0.9) is None
+
+    # Add contexts
     await store.aadd_context("ctx_search", [1.0, 0.0, 0.0])
     await store.aadd_context("ctx_math", [0.0, 1.0, 0.0])
+    await store.aadd_context("ctx_zero", [0.0, 0.0, 0.0])
 
+    # Check cache initialized
+    assert store._matrix is None
+
+    # Query with exact match (initializes cache)
     assert await store.aget_nearest_context([1.0, 0.0, 0.0], 0.9) == "ctx_search"
+    assert store._matrix is not None
+
     assert await store.aget_nearest_context([0.9, 0.1, 0.0], 0.8) == "ctx_search"
     assert await store.aget_nearest_context([0.5, 0.5, 0.0], 0.95) is None
+
+    # Query with zero-norm vector
+    assert await store.aget_nearest_context([0.0, 0.0, 0.0], 0.1) is None
+
+    # Add context and verify cache invalidation
+    await store.aadd_context("ctx_new", [0.0, 0.0, 1.0])
+    assert store._matrix is None
+    assert await store.aget_nearest_context([0.0, 0.0, 1.0], 0.9) == "ctx_new"
+    assert store._matrix is not None
 
 
 @pytest.mark.anyio

@@ -681,17 +681,28 @@ class VectorContextStore:
     def __init__(self) -> None:
         # Maps context_key to its vector representation
         self._contexts: Dict[str, np.ndarray] = {}
+        self._lock = threading.Lock()
+        self._keys_list: Optional[List[str]] = None
+        self._matrix: Optional[np.ndarray] = None
+        self._norms: Optional[np.ndarray] = None
+        self._zero_norm_mask: Optional[np.ndarray] = None
 
     def add_context(self, context_key: str, vector: Sequence[float]) -> None:
         """Add or update a context vector in the index."""
-        self._contexts[context_key] = np.array(vector, dtype=np.float32)
+        with self._lock:
+            self._contexts[context_key] = np.array(vector, dtype=np.float32)
+            self._keys_list = None
+            self._matrix = None
+            self._norms = None
+            self._zero_norm_mask = None
 
     def get_context_vector(self, context_key: str) -> Optional[Sequence[float]]:
         """Retrieve the original vector associated with context_key."""
-        vec = self._contexts.get(context_key)
-        if vec is not None:
-            return vec.tolist()
-        return None
+        with self._lock:
+            vec = self._contexts.get(context_key)
+            if vec is not None:
+                return vec.tolist()
+            return None
 
     def get_nearest_context(
         self, query_vector: Sequence[float], similarity_threshold: float = 0.8
@@ -700,36 +711,46 @@ class VectorContextStore:
         Find the context_key whose stored vector is closest to query_vector,
         provided the cosine similarity is above the threshold.
         """
-        if not self._contexts:
-            return None
+        with self._lock:
+            if not self._contexts:
+                return None
+
+            if self._matrix is None:
+                self._keys_list = list(self._contexts.keys())
+                self._matrix = np.array(
+                    [self._contexts[k] for k in self._keys_list], dtype=np.float32
+                )
+                norms = np.linalg.norm(self._matrix, axis=1)
+                self._zero_norm_mask = (norms == 0.0)
+                norms[self._zero_norm_mask] = 1.0
+                self._norms = norms
+
+            keys_list = self._keys_list
+            ref_matrix = self._matrix
+            ref_norms = self._norms
+            zero_norm_mask = self._zero_norm_mask
 
         q_vec = np.array(query_vector, dtype=np.float32)
         q_norm = np.linalg.norm(q_vec)
         if q_norm == 0.0:
             return None
 
-        best_key = None
-        best_similarity = -1.0
+        dot_products = ref_matrix @ q_vec
+        similarities = dot_products / (q_norm * ref_norms)
+        similarities[zero_norm_mask] = -1.0
 
-        for key, ref_vec in self._contexts.items():
-            ref_norm = np.linalg.norm(ref_vec)
-            if ref_norm == 0.0:
-                continue
-
-            # Cosine similarity calculation
-            similarity = float(np.dot(q_vec, ref_vec) / (q_norm * ref_norm))
-            if similarity > best_similarity:
-                best_similarity = similarity
-                best_key = key
+        best_idx = np.argmax(similarities)
+        best_similarity = float(similarities[best_idx])
 
         if best_similarity >= similarity_threshold:
-            return best_key
+            return keys_list[best_idx]
 
         return None
 
     def to_json(self) -> str:
         """Serialize the context store to a JSON string."""
-        serializable = {key: vec.tolist() for key, vec in self._contexts.items()}
+        with self._lock:
+            serializable = {key: vec.tolist() for key, vec in self._contexts.items()}
         return json.dumps(serializable)
 
     @classmethod
@@ -895,10 +916,18 @@ class AsyncVectorContextStore:
     def __init__(self) -> None:
         self._contexts: Dict[str, np.ndarray] = {}
         self._lock = asyncio.Lock()
+        self._keys_list: Optional[List[str]] = None
+        self._matrix: Optional[np.ndarray] = None
+        self._norms: Optional[np.ndarray] = None
+        self._zero_norm_mask: Optional[np.ndarray] = None
 
     async def aadd_context(self, context_key: str, vector: Sequence[float]) -> None:
         async with self._lock:
             self._contexts[context_key] = np.array(vector, dtype=np.float32)
+            self._keys_list = None
+            self._matrix = None
+            self._norms = None
+            self._zero_norm_mask = None
 
     async def aget_context_vector(self, context_key: str) -> Optional[Sequence[float]]:
         async with self._lock:
@@ -914,28 +943,37 @@ class AsyncVectorContextStore:
             if not self._contexts:
                 return None
 
-            q_vec = np.array(query_vector, dtype=np.float32)
-            q_norm = np.linalg.norm(q_vec)
-            if q_norm == 0.0:
-                return None
+            if self._matrix is None:
+                self._keys_list = list(self._contexts.keys())
+                self._matrix = np.array(
+                    [self._contexts[k] for k in self._keys_list], dtype=np.float32
+                )
+                norms = np.linalg.norm(self._matrix, axis=1)
+                self._zero_norm_mask = (norms == 0.0)
+                norms[self._zero_norm_mask] = 1.0
+                self._norms = norms
 
-            best_key = None
-            best_similarity = -1.0
+            keys_list = self._keys_list
+            ref_matrix = self._matrix
+            ref_norms = self._norms
+            zero_norm_mask = self._zero_norm_mask
 
-            for key, ref_vec in self._contexts.items():
-                ref_norm = np.linalg.norm(ref_vec)
-                if ref_norm == 0.0:
-                    continue
-
-                similarity = float(np.dot(q_vec, ref_vec) / (q_norm * ref_norm))
-                if similarity > best_similarity:
-                    best_similarity = similarity
-                    best_key = key
-
-            if best_similarity >= similarity_threshold:
-                return best_key
-
+        q_vec = np.array(query_vector, dtype=np.float32)
+        q_norm = np.linalg.norm(q_vec)
+        if q_norm == 0.0:
             return None
+
+        dot_products = ref_matrix @ q_vec
+        similarities = dot_products / (q_norm * ref_norms)
+        similarities[zero_norm_mask] = -1.0
+
+        best_idx = np.argmax(similarities)
+        best_similarity = float(similarities[best_idx])
+
+        if best_similarity >= similarity_threshold:
+            return keys_list[best_idx]
+
+        return None
 
     def to_json(self) -> str:
         serializable = {key: vec.tolist() for key, vec in self._contexts.items()}
