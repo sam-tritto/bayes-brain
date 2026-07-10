@@ -14,13 +14,13 @@ from bayesian_cortex.storage import (
 )
 
 
-def test_initialization_by_backend():
+def test_initialization_by_backend(tmp_path):
     # 1. Test Sync memory backend
     router_mem = BayesianRouter(storage_backend="memory")
     assert isinstance(router_mem.storage, InMemoryStorage)
 
     # 2. Test Sync SQLite backend
-    db_path = "test_unified_sync.db"
+    db_path = str(tmp_path / "test_unified_sync.db")
     if os.path.exists(db_path):
         os.remove(db_path)
     try:
@@ -36,7 +36,7 @@ def test_initialization_by_backend():
     assert isinstance(router_async_mem.storage, AsyncInMemoryStorage)
 
     # 4. Test Async SQLite backend
-    db_path_async = "test_unified_async.db"
+    db_path_async = str(tmp_path / "test_unified_async.db")
     if os.path.exists(db_path_async):
         os.remove(db_path_async)
     try:

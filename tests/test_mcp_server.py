@@ -7,8 +7,8 @@ from mcp.server.fastmcp import FastMCP
 from bayesian_cortex.mcp_server import create_mcp_server
 
 
-def test_mcp_server_creation():
-    db_path = "test_mcp_bandit.db"
+def test_mcp_server_creation(tmp_path):
+    db_path = str(tmp_path / "test_mcp_bandit.db")
 
     # Clean up in case of previous failures
     if os.path.exists(db_path):
@@ -37,8 +37,8 @@ def test_mcp_server_creation():
 
 
 @pytest.mark.anyio
-async def test_mcp_server_administrative_features():
-    db_path = "test_mcp_bandit_admin.db"
+async def test_mcp_server_administrative_features(tmp_path):
+    db_path = str(tmp_path / "test_mcp_bandit_admin.db")
     if os.path.exists(db_path):
         os.remove(db_path)
 
@@ -114,8 +114,8 @@ async def test_mcp_server_administrative_features():
 
 
 @pytest.mark.anyio
-async def test_mcp_server_contextual_priors():
-    db_path = "test_mcp_bandit_context_priors.db"
+async def test_mcp_server_contextual_priors(tmp_path):
+    db_path = str(tmp_path / "test_mcp_bandit_context_priors.db")
     if os.path.exists(db_path):
         os.remove(db_path)
 
@@ -156,8 +156,8 @@ async def test_mcp_server_contextual_priors():
 
 
 @pytest.mark.anyio
-async def test_mcp_server_dynamic_registration():
-    db_path = "test_mcp_bandit_dynamic.db"
+async def test_mcp_server_dynamic_registration(tmp_path):
+    db_path = str(tmp_path / "test_mcp_bandit_dynamic.db")
     if os.path.exists(db_path):
         os.remove(db_path)
 
