@@ -880,9 +880,9 @@ class SQLiteVectorStore:
         )
         row = cursor.fetchone()
         if row:
-            import sqlite_vec
+            import struct
 
-            return sqlite_vec.deserialize_float32(row[0])
+            return list(struct.unpack(f"{len(row[0]) // 4}f", row[0]))
         return None
 
     def close(self) -> None:
@@ -1099,9 +1099,9 @@ class AsyncSQLiteVectorStore:
             ) as cursor:
                 row = await cursor.fetchone()
         if row:
-            import sqlite_vec
+            import struct
 
-            return sqlite_vec.deserialize_float32(row[0])
+            return list(struct.unpack(f"{len(row[0]) // 4}f", row[0]))
         return None
 
     async def close(self) -> None:

@@ -9,15 +9,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **First-party embedders**: Added `AnthropicEmbedder`, `CohereEmbedder`, and `LlamaCppEmbedder` implementations to support more models out-of-the-box (and exported them in the main package exports).
+- **Custom Typed Exceptions**: Introduced `BayesianCortexError`, `TamperDetectedError`, and `EmbeddingError` exception classes to allow callers to catch specific library failures instead of catching generic `ValueError` or `RuntimeError`.
+- **Exposed package version**: Exposed `__version__` in the root `bayesian_cortex` namespace using `importlib.metadata`.
+- **Linter/formatter tooling config**: Configured `black`, `mypy`, `ruff`, and `pytest` tools in `pyproject.toml` and added them to `dev` dependency group.
+
+### Changed
+- **Optimized uncertainty math (LinUCB)**: Replaced `np.linalg.inv(precision)` with `np.linalg.solve(precision, x_augmented)` in LinUCB scoring and posterior calculation, reducing complexity from $O(d^3)$ to $O(d^2)$ per candidate and improving numerical stability.
+- **Optimized Thompson Sampling candidate sampling (LinTS)**: Avoided expensive and unstable full matrix inversions of the precision matrix in `_sample_theta` by computing direct Cholesky decomposition of the precision matrix and solving the upper-triangular system $L^T v = z$ via back-substitution.
+- **Vectorized context search in `VectorContextStore`**: Replaced the $O(N)$ linear loop-based cosine similarity scan with a vectorized matrix multiplication (`np.dot`) and cached vector norms, dramatically improving routing speed with large numbers of clusters.
+- **Consolidated bandit math**: Extracted LinTS/LinUCB scoring and update math into reusable, module-level pure-numpy helper functions (`_sample_theta`, `_linear_score`, `_linear_posterior`) shared between `BayesianRouter` and `AsyncBayesianRouter` to eliminate copy-paste duplication.
+- **Shared test fixtures**: Migrated test suites to use shared pytest fixtures (using `conftest.py`) and temporary directory scopes (`tmp_path`) to prevent leftover `.db-shm` and `.db-wal` SQLite files in the project root.
+- **Improved type annotations**: Fixed 80 mypy type safety errors across the codebase, adding type hints and casting where appropriate.
+
 ### Fixed
-- **Double embedding per route call in linear modes** — `route_with_trace()` /
-  `aroute_with_trace()` and `feedback()` / `afeedback()` were calling
-  `embed_query` twice per invocation for `lints`, `linucb`, and `hybrid` modes:
-  once to obtain the scoring vector and a second time inside
-  `_resolve_context_key`. Both `_resolve_context_key` methods now accept an
-  optional `precomputed_vector` argument; callers pass the vector they already
-  hold, eliminating the redundant API round-trip entirely. `clustering` mode and
-  batch paths (`_resolve_context_keys`) are unaffected.
+- **Silent state corruption in `feedback()`**: Added a `strict` parameter to `feedback()` and `afeedback()`. When `strict=True`, storage/write exceptions are raised to the caller rather than silently returning `(1.0, 1.0)` and corrupting state.
+- **Double embedding API calls in linear modes**: Refined the routing and feedback flow (including batch paths) to pass precomputed context vectors, avoiding redundant embedding generation per route or batch update invocation.
+- **Hardcoded dimension fallback**: Replaced the hardcoded `d=384` fallback in `feedback_by_trace` with a dynamic probe-based resolution to determine context vector dimensions, avoiding precision matrix shape mismatches and corruption.
+- **Stop-word-only responses in RAG evaluation**: Modified `calculate_faithfulness` in `rag.py` to return `0.0` instead of `1.0` for responses containing only stop-words, preventing false positive evaluation.
+- **Float-equality cold start bug**: Replaced strict float checks (`alpha == 1.0 and beta == 1.0`) with explicit parameter existence checks, preventing learned parameters from being overwritten by priors when values decay to exactly 1.0.
+- **Silent cluster loss in `_load_context_store`**: Propagated database/storage connection errors during router startup rather than silently ignoring the error and initializing an empty vector store.
+- **Predictive uncertainty NaN propagation**: Wrapped the dot product calculation in uncertainty estimation with `max(0.0, float(...))` to prevent floating-point roundoff from yielding negative values under square root.
+- **SQLite synchronous write concurrency**: Added a retry decorator with backoff on locked database exceptions (`sqlite3.OperationalError: database is locked`) for synchronous `SQLiteStorage` operations.
+- **Anthropic API error messages**: Clarified exception messages in `AnthropicEmbedder` to reference Anthropic/Voyage API instead of only referencing Voyage API.
 
 ---
 

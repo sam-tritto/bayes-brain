@@ -273,6 +273,16 @@ def test_sqlite_vector_store_basic(tmp_path):
             store.get_nearest_context([0.5, 0.5, 0.0], similarity_threshold=0.95)
             is None
         )
+
+        # Get context vector
+        ctx_vec = store.get_context_vector("ctx_search")
+        assert ctx_vec is not None
+        assert len(ctx_vec) == 3
+        assert abs(ctx_vec[0] - 1.0) < 1e-6
+        assert abs(ctx_vec[1] - 0.0) < 1e-6
+        assert abs(ctx_vec[2] - 0.0) < 1e-6
+
+        assert store.get_context_vector("nonexistent") is None
     finally:
         store.close()
 

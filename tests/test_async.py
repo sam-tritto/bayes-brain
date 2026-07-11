@@ -190,6 +190,16 @@ async def test_async_sqlite_vector_store():
         assert await store.aget_nearest_context([0.9, 0.1, 0.0], 0.8) == "ctx_search"
         assert await store.aget_nearest_context([0.5, 0.5, 0.0], 0.95) is None
 
+        # Get context vector
+        ctx_vec = await store.aget_context_vector("ctx_search")
+        assert ctx_vec is not None
+        assert len(ctx_vec) == 3
+        assert abs(ctx_vec[0] - 1.0) < 1e-6
+        assert abs(ctx_vec[1] - 0.0) < 1e-6
+        assert abs(ctx_vec[2] - 0.0) < 1e-6
+
+        assert await store.aget_context_vector("nonexistent") is None
+
         await store.close()
     finally:
         if os.path.exists(db_path):
