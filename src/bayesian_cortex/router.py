@@ -18,6 +18,11 @@ from bayesian_cortex.embeddings import (
     VectorContextStore,
     VectorStoreProtocol,
 )
+from bayesian_cortex.exceptions import (
+    BayesianCortexError,
+    EmbeddingError,
+    TamperDetectedError,
+)
 from bayesian_cortex.storage import (
     AsyncBaseStorage,
     AsyncInMemoryStorage,
@@ -316,7 +321,7 @@ class BayesianRouter:
             try:
                 self._load_context_store()
             except Exception as exc:
-                raise RuntimeError(
+                raise BayesianCortexError(
                     "BayesianRouter could not restore its cluster index from the "
                     "storage backend on startup. Resolve the underlying storage "
                     "error before the router is used, otherwise all routing "
@@ -365,7 +370,7 @@ class BayesianRouter:
 
         Resolution order:
         1. Probe the live embedder with a sentinel string (authoritative).
-        2. Raise ``RuntimeError`` — cannot safely guess the dimension.
+        2. Raise ``EmbeddingError`` — cannot safely guess the dimension.
 
         This is used to build a correctly-shaped zero-vector fallback when a
         context vector is missing (e.g. after a server restart) so that the
@@ -376,11 +381,11 @@ class BayesianRouter:
                 sample = self.embedder.embed_query("__dim_probe__")
                 return len(sample)
             except Exception as exc:
-                raise RuntimeError(
+                raise EmbeddingError(
                     "Could not determine embedding dimension from the configured embedder. "
                     "Refusing to use a hardcoded fallback to avoid corrupting the precision matrix."
                 ) from exc
-        raise RuntimeError(
+        raise EmbeddingError(
             "No embedder is configured and the embedding dimension cannot be determined. "
             "Cannot safely construct a zero-vector fallback."
         )
@@ -576,7 +581,7 @@ class BayesianRouter:
             payload = json.loads(json_bytes.decode("utf-8"))
             return payload["ctx"], payload["candidate"]
         except Exception as e:
-            raise ValueError(f"Invalid or corrupted trace ID: {trace_id}") from e
+            raise TamperDetectedError(f"Invalid or corrupted trace ID: {trace_id}") from e
 
     def route(
         self,
@@ -1963,7 +1968,7 @@ class AsyncBayesianRouter:
 
         Resolution order:
         1. Probe the live embedder with a sentinel string (authoritative).
-        2. Raise ``RuntimeError`` — cannot safely guess the dimension.
+        2. Raise ``EmbeddingError`` — cannot safely guess the dimension.
 
         This is used to build a correctly-shaped zero-vector fallback when a
         context vector is missing (e.g. after a server restart) so that the
@@ -1977,11 +1982,11 @@ class AsyncBayesianRouter:
                     sample = self.embedder.embed_query("__dim_probe__")
                 return len(sample)
             except Exception as exc:
-                raise RuntimeError(
+                raise EmbeddingError(
                     "Could not determine embedding dimension from the configured embedder. "
                     "Refusing to use a hardcoded fallback to avoid corrupting the precision matrix."
                 ) from exc
-        raise RuntimeError(
+        raise EmbeddingError(
             "No embedder is configured and the embedding dimension cannot be determined. "
             "Cannot safely construct a zero-vector fallback."
         )
@@ -2189,7 +2194,7 @@ class AsyncBayesianRouter:
             payload = json.loads(json_bytes.decode("utf-8"))
             return payload["ctx"], payload["candidate"]
         except Exception as e:
-            raise ValueError(f"Invalid or corrupted trace ID: {trace_id}") from e
+            raise TamperDetectedError(f"Invalid or corrupted trace ID: {trace_id}") from e
 
     async def _call_telemetry(
         self, event: str, exc: Exception, ctx: Dict[str, Any]

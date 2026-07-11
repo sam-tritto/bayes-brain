@@ -4,6 +4,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from bayesian_cortex import BayesianCortexError, EmbeddingError
 from bayesian_cortex.embeddings import (
     AnthropicEmbedder,
     CohereEmbedder,
@@ -62,10 +63,14 @@ def test_gemini_embedder_rest_http_error(mock_urlopen):
 
     embedder = GeminiEmbedder(api_key="fake-key")
     with pytest.raises(
-        RuntimeError,
+        EmbeddingError,
         match="Gemini API request failed with status 400: Invalid API key or model",
-    ):
+    ) as exc_info:
         embedder.embed_query("hello")
+
+    # Check exception hierarchy
+    assert isinstance(exc_info.value, RuntimeError)
+    assert isinstance(exc_info.value, BayesianCortexError)
 
 
 def test_gemini_embedder_new_sdk_client():
@@ -200,10 +205,14 @@ def test_openai_embedder_rest_http_error(mock_urlopen):
 
     embedder = OpenAIEmbedder(api_key="bad-key")
     with pytest.raises(
-        RuntimeError,
+        EmbeddingError,
         match="OpenAI API request failed with status 401: Unauthorized API Key",
-    ):
+    ) as exc_info:
         embedder.embed_query("hello")
+
+    # Check exception hierarchy
+    assert isinstance(exc_info.value, RuntimeError)
+    assert isinstance(exc_info.value, BayesianCortexError)
 
 
 def test_openai_embedder_sdk_client():

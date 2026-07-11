@@ -14,6 +14,11 @@ from bayesian_cortex.embeddings import (
     VectorContextStore,
     VectorStoreProtocol,
 )
+from bayesian_cortex.exceptions import (
+    BayesianCortexError,
+    EmbeddingError,
+    TamperDetectedError,
+)
 from bayesian_cortex.mcp_server import create_mcp_server
 from bayesian_cortex.rag import (
     aprocess_ui_feedback,
@@ -68,4 +73,7 @@ __all__ = [
     "evaluate_rag_success",
     "process_ui_feedback",
     "aprocess_ui_feedback",
+    "BayesianCortexError",
+    "TamperDetectedError",
+    "EmbeddingError",
 ]

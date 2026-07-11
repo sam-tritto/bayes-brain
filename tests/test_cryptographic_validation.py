@@ -8,13 +8,14 @@ feedback_by_trace and afeedback_by_trace raise a strict ValueError under strict 
 
 import pytest
 
+from bayesian_cortex import BayesianCortexError, TamperDetectedError
 from bayesian_cortex.router import AsyncBayesianRouter, BayesianRouter
 
 
 def test_sync_trace_id_manipulation(mem_storage):
     """
     Sync Test: Captures a valid trace_id, modifies a single character in the payload part,
-    and asserts that feedback_by_trace raises a strict ValueError.
+    and asserts that feedback_by_trace raises a strict TamperDetectedError.
     """
     router = BayesianRouter(storage=mem_storage, secret_key="secure_hmac_test_key")
 
@@ -40,16 +41,20 @@ def test_sync_trace_id_manipulation(mem_storage):
 
     tampered_trace_id = f"{tampered_payload}.{sig_part}"
 
-    # Verify that calling feedback_by_trace under strict mode raises a ValueError
-    with pytest.raises(ValueError, match="Invalid or corrupted trace ID"):
+    # Verify that calling feedback_by_trace under strict mode raises a TamperDetectedError
+    with pytest.raises(TamperDetectedError, match="Invalid or corrupted trace ID") as exc_info:
         router.feedback_by_trace(tampered_trace_id, success=True, strict=True)
+
+    # Check exception hierarchy
+    assert isinstance(exc_info.value, ValueError)
+    assert isinstance(exc_info.value, BayesianCortexError)
 
 
 @pytest.mark.anyio
 async def test_async_trace_id_manipulation(async_mem_storage):
     """
     Async Test: Captures a valid trace_id, modifies a single character in the payload part,
-    and asserts that afeedback_by_trace raises a strict ValueError.
+    and asserts that afeedback_by_trace raises a strict TamperDetectedError.
     """
     router = AsyncBayesianRouter(
         storage=async_mem_storage, secret_key="secure_hmac_test_key"
@@ -76,6 +81,10 @@ async def test_async_trace_id_manipulation(async_mem_storage):
 
     tampered_trace_id = f"{tampered_payload}.{sig_part}"
 
-    # Verify that calling afeedback_by_trace under strict mode raises a ValueError
-    with pytest.raises(ValueError, match="Invalid or corrupted trace ID"):
+    # Verify that calling afeedback_by_trace under strict mode raises a TamperDetectedError
+    with pytest.raises(TamperDetectedError, match="Invalid or corrupted trace ID") as exc_info:
         await router.afeedback_by_trace(tampered_trace_id, success=True, strict=True)
+
+    # Check exception hierarchy
+    assert isinstance(exc_info.value, ValueError)
+    assert isinstance(exc_info.value, BayesianCortexError)

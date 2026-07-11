@@ -9,6 +9,8 @@ from typing import Any, Dict, List, Optional, Protocol, Sequence
 
 import numpy as np
 
+from bayesian_cortex.exceptions import EmbeddingError
+
 
 class ContextEmbedder(Protocol):
     """Protocol defining how to convert text into a vector context key."""
@@ -167,16 +169,16 @@ class GeminiEmbedder:
                 resp_data = json.loads(response.read().decode("utf-8"))
                 if "embedding" in resp_data and "values" in resp_data["embedding"]:
                     return [float(x) for x in resp_data["embedding"]["values"]]
-                raise ValueError(
+                raise EmbeddingError(
                     f"Unexpected response structure from Gemini API: {resp_data}"
                 )
         except urllib.error.HTTPError as e:
             err_body = e.read().decode("utf-8")
-            raise RuntimeError(
+            raise EmbeddingError(
                 f"Gemini API request failed with status {e.code}: {err_body}"
             ) from e
         except Exception as e:
-            raise RuntimeError(f"Failed to communicate with Gemini API: {e}") from e
+            raise EmbeddingError(f"Failed to communicate with Gemini API: {e}") from e
 
     async def aembed_query(self, text: str) -> Sequence[float]:
         if self.client is not None:
@@ -263,15 +265,15 @@ class GeminiEmbedder:
                 resp_data = response.json()
                 if "embedding" in resp_data and "values" in resp_data["embedding"]:
                     return [float(x) for x in resp_data["embedding"]["values"]]
-                raise ValueError(
+                raise EmbeddingError(
                     f"Unexpected response structure from Gemini API: {resp_data}"
                 )
         except httpx.HTTPStatusError as e:
-            raise RuntimeError(
+            raise EmbeddingError(
                 f"Gemini API request failed with status {e.response.status_code}: {e.response.text}"
             ) from e
         except Exception as e:
-            raise RuntimeError(f"Failed to communicate with Gemini API: {e}") from e
+            raise EmbeddingError(f"Failed to communicate with Gemini API: {e}") from e
 
     def embed_queries(self, texts: List[str]) -> List[Sequence[float]]:
         if not texts:
@@ -324,16 +326,16 @@ class GeminiEmbedder:
                         [float(x) for x in emb["values"]]
                         for emb in resp_data["embeddings"]
                     ]
-                raise ValueError(
+                raise EmbeddingError(
                     f"Unexpected response structure from Gemini API: {resp_data}"
                 )
         except urllib.error.HTTPError as e:
             err_body = e.read().decode("utf-8")
-            raise RuntimeError(
+            raise EmbeddingError(
                 f"Gemini API request failed with status {e.code}: {err_body}"
             ) from e
         except Exception as e:
-            raise RuntimeError(f"Failed to communicate with Gemini API: {e}") from e
+            raise EmbeddingError(f"Failed to communicate with Gemini API: {e}") from e
 
     async def aembed_queries(self, texts: List[str]) -> List[Sequence[float]]:
         if not texts:
@@ -393,15 +395,15 @@ class GeminiEmbedder:
                         [float(x) for x in emb["values"]]
                         for emb in resp_data["embeddings"]
                     ]
-                raise ValueError(
+                raise EmbeddingError(
                     f"Unexpected response structure from Gemini API: {resp_data}"
                 )
         except httpx.HTTPStatusError as e:
-            raise RuntimeError(
+            raise EmbeddingError(
                 f"Gemini API request failed with status {e.response.status_code}: {e.response.text}"
             ) from e
         except Exception as e:
-            raise RuntimeError(f"Failed to communicate with Gemini API: {e}") from e
+            raise EmbeddingError(f"Failed to communicate with Gemini API: {e}") from e
 
 
 class OpenAIEmbedder:
@@ -475,16 +477,16 @@ class OpenAIEmbedder:
                     and "embedding" in resp_data["data"][0]
                 ):
                     return [float(x) for x in resp_data["data"][0]["embedding"]]
-                raise ValueError(
+                raise EmbeddingError(
                     f"Unexpected response structure from OpenAI API: {resp_data}"
                 )
         except urllib.error.HTTPError as e:
             err_body = e.read().decode("utf-8")
-            raise RuntimeError(
+            raise EmbeddingError(
                 f"OpenAI API request failed with status {e.code}: {err_body}"
             ) from e
         except Exception as e:
-            raise RuntimeError(f"Failed to communicate with OpenAI API: {e}") from e
+            raise EmbeddingError(f"Failed to communicate with OpenAI API: {e}") from e
 
     async def aembed_query(self, text: str) -> Sequence[float]:
         if self.client is not None:
@@ -538,15 +540,15 @@ class OpenAIEmbedder:
                     and "embedding" in resp_data["data"][0]
                 ):
                     return [float(x) for x in resp_data["data"][0]["embedding"]]
-                raise ValueError(
+                raise EmbeddingError(
                     f"Unexpected response structure from OpenAI API: {resp_data}"
                 )
         except httpx.HTTPStatusError as e:
-            raise RuntimeError(
+            raise EmbeddingError(
                 f"OpenAI API request failed with status {e.response.status_code}: {e.response.text}"
             ) from e
         except Exception as e:
-            raise RuntimeError(f"Failed to communicate with OpenAI API: {e}") from e
+            raise EmbeddingError(f"Failed to communicate with OpenAI API: {e}") from e
 
     def embed_queries(self, texts: List[str]) -> List[Sequence[float]]:
         if not texts:
@@ -595,16 +597,16 @@ class OpenAIEmbedder:
                     return [
                         [float(x) for x in item["embedding"]] for item in sorted_data
                     ]
-                raise ValueError(
+                raise EmbeddingError(
                     f"Unexpected response structure from OpenAI API: {resp_data}"
                 )
         except urllib.error.HTTPError as e:
             err_body = e.read().decode("utf-8")
-            raise RuntimeError(
+            raise EmbeddingError(
                 f"OpenAI API request failed with status {e.code}: {err_body}"
             ) from e
         except Exception as e:
-            raise RuntimeError(f"Failed to communicate with OpenAI API: {e}") from e
+            raise EmbeddingError(f"Failed to communicate with OpenAI API: {e}") from e
 
     async def aembed_queries(self, texts: List[str]) -> List[Sequence[float]]:
         if not texts:
@@ -661,15 +663,15 @@ class OpenAIEmbedder:
                     return [
                         [float(x) for x in item["embedding"]] for item in sorted_data
                     ]
-                raise ValueError(
+                raise EmbeddingError(
                     f"Unexpected response structure from OpenAI API: {resp_data}"
                 )
         except httpx.HTTPStatusError as e:
-            raise RuntimeError(
+            raise EmbeddingError(
                 f"OpenAI API request failed with status {e.response.status_code}: {e.response.text}"
             ) from e
         except Exception as e:
-            raise RuntimeError(f"Failed to communicate with OpenAI API: {e}") from e
+            raise EmbeddingError(f"Failed to communicate with OpenAI API: {e}") from e
 
 
 class VectorContextStore:
@@ -1168,16 +1170,16 @@ class AnthropicEmbedder:
                     and "embedding" in resp_data["data"][0]
                 ):
                     return [float(x) for x in resp_data["data"][0]["embedding"]]
-                raise ValueError(
+                raise EmbeddingError(
                     f"Unexpected response structure from Voyage API: {resp_data}"
                 )
         except urllib.error.HTTPError as e:
             err_body = e.read().decode("utf-8")
-            raise RuntimeError(
+            raise EmbeddingError(
                 f"Voyage API request failed with status {e.code}: {err_body}"
             ) from e
         except Exception as e:
-            raise RuntimeError(f"Failed to communicate with Voyage API: {e}") from e
+            raise EmbeddingError(f"Failed to communicate with Voyage API: {e}") from e
 
     async def aembed_query(self, text: str) -> Sequence[float]:
         if self.client is not None:
@@ -1231,15 +1233,15 @@ class AnthropicEmbedder:
                     and "embedding" in resp_data["data"][0]
                 ):
                     return [float(x) for x in resp_data["data"][0]["embedding"]]
-                raise ValueError(
+                raise EmbeddingError(
                     f"Unexpected response structure from Voyage API: {resp_data}"
                 )
         except httpx.HTTPStatusError as e:
-            raise RuntimeError(
+            raise EmbeddingError(
                 f"Voyage API request failed with status {e.response.status_code}: {e.response.text}"
             ) from e
         except Exception as e:
-            raise RuntimeError(f"Failed to communicate with Voyage API: {e}") from e
+            raise EmbeddingError(f"Failed to communicate with Voyage API: {e}") from e
 
     def embed_queries(self, texts: List[str]) -> List[Sequence[float]]:
         if not texts:
@@ -1287,16 +1289,16 @@ class AnthropicEmbedder:
                     return [
                         [float(x) for x in item["embedding"]] for item in sorted_data
                     ]
-                raise ValueError(
+                raise EmbeddingError(
                     f"Unexpected response structure from Voyage API: {resp_data}"
                 )
         except urllib.error.HTTPError as e:
             err_body = e.read().decode("utf-8")
-            raise RuntimeError(
+            raise EmbeddingError(
                 f"Voyage API request failed with status {e.code}: {err_body}"
             ) from e
         except Exception as e:
-            raise RuntimeError(f"Failed to communicate with Voyage API: {e}") from e
+            raise EmbeddingError(f"Failed to communicate with Voyage API: {e}") from e
 
     async def aembed_queries(self, texts: List[str]) -> List[Sequence[float]]:
         if not texts:
@@ -1355,15 +1357,15 @@ class AnthropicEmbedder:
                     return [
                         [float(x) for x in item["embedding"]] for item in sorted_data
                     ]
-                raise ValueError(
+                raise EmbeddingError(
                     f"Unexpected response structure from Voyage API: {resp_data}"
                 )
         except httpx.HTTPStatusError as e:
-            raise RuntimeError(
+            raise EmbeddingError(
                 f"Voyage API request failed with status {e.response.status_code}: {e.response.text}"
             ) from e
         except Exception as e:
-            raise RuntimeError(f"Failed to communicate with Voyage API: {e}") from e
+            raise EmbeddingError(f"Failed to communicate with Voyage API: {e}") from e
 
 
 class CohereEmbedder:
@@ -1446,16 +1448,16 @@ class CohereEmbedder:
                     return [float(x) for x in resp_data["embeddings"]["float"][0]]
                 if "embeddings" in resp_data and len(resp_data["embeddings"]) > 0:
                     return [float(x) for x in resp_data["embeddings"][0]]
-                raise ValueError(
+                raise EmbeddingError(
                     f"Unexpected response structure from Cohere API: {resp_data}"
                 )
         except urllib.error.HTTPError as e:
             err_body = e.read().decode("utf-8")
-            raise RuntimeError(
+            raise EmbeddingError(
                 f"Cohere API request failed with status {e.code}: {err_body}"
             ) from e
         except Exception as e:
-            raise RuntimeError(f"Failed to communicate with Cohere API: {e}") from e
+            raise EmbeddingError(f"Failed to communicate with Cohere API: {e}") from e
 
     async def aembed_query(self, text: str) -> Sequence[float]:
         if self.client is not None:
@@ -1542,15 +1544,15 @@ class CohereEmbedder:
                     return [float(x) for x in resp_data["embeddings"]["float"][0]]
                 if "embeddings" in resp_data and len(resp_data["embeddings"]) > 0:
                     return [float(x) for x in resp_data["embeddings"][0]]
-                raise ValueError(
+                raise EmbeddingError(
                     f"Unexpected response structure from Cohere API: {resp_data}"
                 )
         except httpx.HTTPStatusError as e:
-            raise RuntimeError(
+            raise EmbeddingError(
                 f"Cohere API request failed with status {e.response.status_code}: {e.response.text}"
             ) from e
         except Exception as e:
-            raise RuntimeError(f"Failed to communicate with Cohere API: {e}") from e
+            raise EmbeddingError(f"Failed to communicate with Cohere API: {e}") from e
 
     def embed_queries(self, texts: List[str]) -> List[Sequence[float]]:
         if not texts:
@@ -1615,16 +1617,16 @@ class CohereEmbedder:
                     ]
                 if "embeddings" in resp_data:
                     return [[float(x) for x in emb] for emb in resp_data["embeddings"]]
-                raise ValueError(
+                raise EmbeddingError(
                     f"Unexpected response structure from Cohere API: {resp_data}"
                 )
         except urllib.error.HTTPError as e:
             err_body = e.read().decode("utf-8")
-            raise RuntimeError(
+            raise EmbeddingError(
                 f"Cohere API request failed with status {e.code}: {err_body}"
             ) from e
         except Exception as e:
-            raise RuntimeError(f"Failed to communicate with Cohere API: {e}") from e
+            raise EmbeddingError(f"Failed to communicate with Cohere API: {e}") from e
 
     async def aembed_queries(self, texts: List[str]) -> List[Sequence[float]]:
         if not texts:
@@ -1712,15 +1714,15 @@ class CohereEmbedder:
                     ]
                 if "embeddings" in resp_data:
                     return [[float(x) for x in emb] for emb in resp_data["embeddings"]]
-                raise ValueError(
+                raise EmbeddingError(
                     f"Unexpected response structure from Cohere API: {resp_data}"
                 )
         except httpx.HTTPStatusError as e:
-            raise RuntimeError(
+            raise EmbeddingError(
                 f"Cohere API request failed with status {e.response.status_code}: {e.response.text}"
             ) from e
         except Exception as e:
-            raise RuntimeError(f"Failed to communicate with Cohere API: {e}") from e
+            raise EmbeddingError(f"Failed to communicate with Cohere API: {e}") from e
 
 
 class LlamaCppEmbedder:
@@ -1759,7 +1761,7 @@ class LlamaCppEmbedder:
                 if "embedding" in resp_data:
                     embeddings.append([float(x) for x in resp_data["embedding"]])
                 else:
-                    raise ValueError(
+                    raise EmbeddingError(
                         f"Unexpected response structure from llama.cpp API: {resp_data}"
                     )
         return embeddings
@@ -1789,7 +1791,7 @@ class LlamaCppEmbedder:
                     and "embedding" in resp_data["data"][0]
                 ):
                     return [float(x) for x in resp_data["data"][0]["embedding"]]
-                raise ValueError(
+                raise EmbeddingError(
                     f"Unexpected response structure from llama.cpp API: {resp_data}"
                 )
         except urllib.error.HTTPError as e:
@@ -1800,11 +1802,11 @@ class LlamaCppEmbedder:
             except Exception:
                 pass
             err_body = e.read().decode("utf-8")
-            raise RuntimeError(
+            raise EmbeddingError(
                 f"llama.cpp API request failed with status {e.code}: {err_body}"
             ) from e
         except Exception as e:
-            raise RuntimeError(f"Failed to communicate with llama.cpp API: {e}") from e
+            raise EmbeddingError(f"Failed to communicate with llama.cpp API: {e}") from e
 
     async def _acall_raw_fallback(self, texts: List[str]) -> List[Sequence[float]]:
         try:
@@ -1833,7 +1835,7 @@ class LlamaCppEmbedder:
                 if "embedding" in resp_data:
                     embeddings.append([float(x) for x in resp_data["embedding"]])
                 else:
-                    raise ValueError(
+                    raise EmbeddingError(
                         f"Unexpected response structure from llama.cpp API: {resp_data}"
                     )
         return embeddings
@@ -1867,7 +1869,7 @@ class LlamaCppEmbedder:
                     and "embedding" in resp_data["data"][0]
                 ):
                     return [float(x) for x in resp_data["data"][0]["embedding"]]
-                raise ValueError(
+                raise EmbeddingError(
                     f"Unexpected response structure from llama.cpp API: {resp_data}"
                 )
         except httpx.HTTPStatusError as e:
@@ -1877,11 +1879,11 @@ class LlamaCppEmbedder:
                     return fallback_results[0]
             except Exception:
                 pass
-            raise RuntimeError(
+            raise EmbeddingError(
                 f"llama.cpp API request failed with status {e.response.status_code}: {e.response.text}"
             ) from e
         except Exception as e:
-            raise RuntimeError(f"Failed to communicate with llama.cpp API: {e}") from e
+            raise EmbeddingError(f"Failed to communicate with llama.cpp API: {e}") from e
 
     def embed_queries(self, texts: List[str]) -> List[Sequence[float]]:
         if not texts:
@@ -1911,7 +1913,7 @@ class LlamaCppEmbedder:
                     return [
                         [float(x) for x in item["embedding"]] for item in sorted_data
                     ]
-                raise ValueError(
+                raise EmbeddingError(
                     f"Unexpected response structure from llama.cpp API: {resp_data}"
                 )
         except urllib.error.HTTPError as e:
@@ -1920,11 +1922,11 @@ class LlamaCppEmbedder:
             except Exception:
                 pass
             err_body = e.read().decode("utf-8")
-            raise RuntimeError(
+            raise EmbeddingError(
                 f"llama.cpp API request failed with status {e.code}: {err_body}"
             ) from e
         except Exception as e:
-            raise RuntimeError(f"Failed to communicate with llama.cpp API: {e}") from e
+            raise EmbeddingError(f"Failed to communicate with llama.cpp API: {e}") from e
 
     async def aembed_queries(self, texts: List[str]) -> List[Sequence[float]]:
         if not texts:
@@ -1958,7 +1960,7 @@ class LlamaCppEmbedder:
                     return [
                         [float(x) for x in item["embedding"]] for item in sorted_data
                     ]
-                raise ValueError(
+                raise EmbeddingError(
                     f"Unexpected response structure from llama.cpp API: {resp_data}"
                 )
         except httpx.HTTPStatusError as e:
@@ -1966,8 +1968,8 @@ class LlamaCppEmbedder:
                 return await self._acall_raw_fallback(texts)
             except Exception:
                 pass
-            raise RuntimeError(
+            raise EmbeddingError(
                 f"llama.cpp API request failed with status {e.response.status_code}: {e.response.text}"
             ) from e
         except Exception as e:
-            raise RuntimeError(f"Failed to communicate with llama.cpp API: {e}") from e
+            raise EmbeddingError(f"Failed to communicate with llama.cpp API: {e}") from e
