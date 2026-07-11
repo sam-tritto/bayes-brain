@@ -25,7 +25,7 @@ In short: It stops your agents from repeating the same mistakes, turning raw AI 
 
 Stop burning tokens and install **BayesianCortex** today!
 
-Works with [OpenAI](https://openai.com/), [Anthropic](https://www.anthropic.com/), [Google Gemini](https://gemini.google.com/), [FastMCP](https://gofastmcp.com/getting-started/welcome), and many more! You just have to plug in your own **Transport Layer**, and you're good to go.
+Works with [OpenAI](https://openai.com/), [Anthropic](https://www.anthropic.com/), [Google Gemini](https://gemini.google.com/), [Cohere](https://cohere.com/), [FastMCP](https://gofastmcp.com/getting-started/welcome), and many more! First-party embedders are built-in for all major providers (Gemini, OpenAI, Anthropic/Voyage, Cohere, and local Sentence-Transformers/llama.cpp).
 
 ---
 
@@ -152,8 +152,10 @@ uv pip install "bayesian-cortex[all]"
 By supporting both Candidates and Skills, `bayesian_cortex` manages routing uncertainty under a single unified class:
 
 ```python
-from bayesian_cortex import BayesianRouter
+from bayesian_cortex import BayesianRouter, __version__
 from bayesian_cortex.embeddings import GeminiEmbedder
+
+print(f"Using BayesianCortex version: {__version__}")
 
 # 1. Initialize router using auto-configured SQLite backend
 embedder = GeminiEmbedder(model_name="models/text-embedding-004")
@@ -171,11 +173,12 @@ chosen_candidate = router.route(
 )
 print(f"Routed to candidate: {chosen_candidate}")
 
-# Provide feedback
+# Provide feedback (optionally set strict=True to raise exceptions if DB write fails)
 router.feedback(
     context_key="Fetch user profile from PostgreSQL",
     candidate=chosen_candidate,
-    success=True
+    success=True,
+    strict=True
 )
 
 # Scenario B: Skill / Prompt Routing (heuristic, workflow-bound)
@@ -529,6 +532,24 @@ process_ui_feedback(
     trace_id=trace_id,       # Signed trace ID from route_with_trace
     feedback_value="thumbs_up"  # Acceptable values: "thumbs_up", "thumbs_down", True, False, etc.
 )
+
+### 🔌 First-Party Embedder Support
+BayesianCortex comes with first-party wrappers for popular LLM and embedding providers, making it trivial to plug in any vector model:
+* **Google Gemini**: `GeminiEmbedder(model_name="models/text-embedding-004")`
+* **OpenAI**: `OpenAIEmbedder(model_name="text-embedding-3-small")`
+* **Anthropic / Voyage AI**: `AnthropicEmbedder(model_name="voyage-3")` (routes to Voyage AI, Anthropic's official embedding partner)
+* **Cohere**: `CohereEmbedder(model_name="embed-english-v3.0")`
+* **Local Models**: `LocalSentenceTransformerEmbedder(model_name="all-MiniLM-L6-v2")` or `LlamaCppEmbedder`
+
+All embedders implement the `ContextEmbedder` / `AsyncContextEmbedder` protocol and support synchronous (`embed_query`) and asynchronous (`aembed_query`) operations.
+
+### ⚠️ Typed Exceptions & Robust Error Handling
+Rather than raising generic `ValueError` or `RuntimeError` objects, BayesianCortex raises a clean hierarchy of typed exceptions inheriting from `BayesianCortexError`:
+* `BayesianCortexError`: The base class for all exceptions raised by the library.
+* `TamperDetectedError`: Raised when HMAC signature verification fails or trace ID is tampered.
+* `EmbeddingError`: Raised when embedding generation or API communication fails.
+
+In addition, the `feedback`, `afeedback`, `feedback_by_trace`, and `afeedback_by_trace` methods support a `strict` boolean parameter (default: `False`). If set to `True`, the router will propagate underlying storage errors (such as locked SQLite databases) as exceptions to the caller rather than swallowing them.
 ```
 
 ---
