@@ -7,7 +7,7 @@ import logging
 import os
 import re
 import uuid
-from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple, Union
+from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple, Union, cast
 
 import numpy as np
 
@@ -261,7 +261,7 @@ class BayesianRouter:
         self.contextual_priors = []
         if contextual_priors:
             for item in contextual_priors:
-                parsed_item = {}
+                parsed_item: Dict[str, Any] = {}
                 if "priors" not in item or not isinstance(item["priors"], dict):
                     raise ValueError(
                         "Each contextual prior must contain a 'priors' dictionary."
@@ -438,7 +438,7 @@ class BayesianRouter:
         return emb
 
     def _resolve_context_key(
-        self, context_text: str, precomputed_vector: Optional[np.ndarray] = None
+        self, context_text: str, precomputed_vector: Optional[Union[np.ndarray, Sequence[float]]] = None
     ) -> str:
         """
         Resolve the given raw context string into a normalized context key.
@@ -468,7 +468,7 @@ class BayesianRouter:
 
         # Find nearest vector context in index
         matched_key = self._context_store.get_nearest_context(
-            query_vector=vector,
+            query_vector=cast(Sequence[float], vector),
             similarity_threshold=self.similarity_threshold,
         )
 
@@ -477,9 +477,9 @@ class BayesianRouter:
 
         # No match found: spawn a new context cluster and save it
         new_key = f"ctx_{uuid.uuid4().hex}"
-        self._context_store.add_context(new_key, vector)
+        self._context_store.add_context(new_key, cast(Sequence[float], vector))
         if not self._custom_vector_store_active:
-            self.storage.save_vector(new_key, vector)
+            self.storage.save_vector(new_key, cast(Sequence[float], vector))
         return new_key
 
     def get_prior(self, context_text: str, candidate_name: str) -> Tuple[float, float]:
@@ -1416,7 +1416,7 @@ class BayesianRouter:
                 else:
                     vectors = [self.embedder.embed_query(ctx) for ctx in contexts]
 
-                tool_params = {}
+                tool_params: Dict[str, Tuple[Any, Any]] = {}
                 if hasattr(self.storage, "get_linear_params_batch"):
                     tool_params = self.storage.get_linear_params_batch(candidates)
                 else:
@@ -1569,11 +1569,12 @@ class BayesianRouter:
                         if fb.get("context_text") is not None
                         else fb.get("context_key")
                     )
-                    candidate_name = fb.get("candidate_name")
-                    if not context_text or not candidate_name:
+                    candidate_name_val = fb.get("candidate_name")
+                    if not context_text or not candidate_name_val:
                         raise ValueError(
                             "Feedback must contain either 'trace_id' or context and candidate identifiers."
                         )
+                    candidate_name = str(candidate_name_val)
 
                     prepared_feedbacks.append(
                         {
@@ -1606,27 +1607,27 @@ class BayesianRouter:
                     prepared_feedbacks[idx]["context_key"] = key
 
             if self.mode == "clustering":
-                updates = []
+                clustering_updates: List[Tuple[str, str, float, float]] = []
                 for fb in prepared_feedbacks:
-                    updates.append(
+                    clustering_updates.append(
                         (
-                            fb["context_key"],
-                            fb["candidate_name"],
-                            self.decay_factor,
-                            fb["reward_val"],
+                            str(fb["context_key"]),
+                            str(fb["candidate_name"]),
+                            float(self.decay_factor),
+                            cast(float, fb["reward_val"]),
                         )
                     )
-                self.storage.decay_and_update_batch(updates)
+                self.storage.decay_and_update_batch(clustering_updates)
             elif self.hybrid:
-                updates = []
+                hybrid_updates: List[Tuple[str, float, float, np.ndarray, float, float, bool]] = []
                 for fb in prepared_feedbacks:
-                    candidate_name = fb["candidate_name"]
-                    reward_val = fb["reward_val"]
+                    candidate_name = str(fb["candidate_name"])
+                    reward_val = cast(float, fb["reward_val"])
                     t_a = self._get_candidate_embedding(candidate_name)
 
                     if fb["type"] == "trace":
                         x_seq = self._context_store.get_context_vector(
-                            fb["context_key"]
+                            str(fb["context_key"])
                         )
                         if x_seq is None:
                             logger.warning(
@@ -1653,29 +1654,29 @@ class BayesianRouter:
                     else:
                         prior_p = 0.5
 
-                    updates.append(
+                    hybrid_updates.append(
                         (
                             "__shared_hybrid__",
-                            self.decay_factor,
+                            float(self.decay_factor),
                             reward_val,
                             x_augmented,
-                            self.lambda_val,
-                            prior_p,
-                            self.diagonal_covariance,
+                            float(self.lambda_val),
+                            float(prior_p),
+                            bool(self.diagonal_covariance),
                         )
                     )
 
-                self.storage.decay_and_update_linear_batch(updates)
+                self.storage.decay_and_update_linear_batch(hybrid_updates)
 
             else:
-                updates = []
+                linear_updates: List[Tuple[str, float, float, np.ndarray, float, float, bool]] = []
                 for fb in prepared_feedbacks:
-                    candidate_name = fb["candidate_name"]
-                    reward_val = fb["reward_val"]
+                    candidate_name = str(fb["candidate_name"])
+                    reward_val = cast(float, fb["reward_val"])
 
                     if fb["type"] == "trace":
                         x_seq = self._context_store.get_context_vector(
-                            fb["context_key"]
+                            str(fb["context_key"])
                         )
                         if x_seq is None:
                             logger.warning(
@@ -1702,27 +1703,28 @@ class BayesianRouter:
                     else:
                         prior_p = 0.5
 
-                    updates.append(
+                    linear_updates.append(
                         (
                             candidate_name,
-                            self.decay_factor,
+                            float(self.decay_factor),
                             reward_val,
                             x_augmented,
-                            self.lambda_val,
-                            prior_p,
-                            self.diagonal_covariance,
+                            float(self.lambda_val),
+                            float(prior_p),
+                            bool(self.diagonal_covariance),
                         )
                     )
 
-                self.storage.decay_and_update_linear_batch(updates)
+                self.storage.decay_and_update_linear_batch(linear_updates)
 
             # Log trace feedback
             for fb in feedbacks:
                 trace_id = fb.get("trace_id")
                 if trace_id is not None:
+                    reward = fb.get("reward")
                     reward_val = (
-                        float(fb.get("reward"))
-                        if fb.get("reward") is not None
+                        float(reward)
+                        if reward is not None
                         else (1.0 if fb.get("success") else 0.0)
                     )
                     self.storage.log_feedback(trace_id, reward_val)
@@ -1856,7 +1858,7 @@ class AsyncBayesianRouter:
         self.contextual_priors = []
         if contextual_priors:
             for item in contextual_priors:
-                parsed_item = {}
+                parsed_item: Dict[str, Any] = {}
                 if "priors" not in item or not isinstance(item["priors"], dict):
                     raise ValueError(
                         "Each contextual prior must contain a 'priors' dictionary."
@@ -2046,7 +2048,7 @@ class AsyncBayesianRouter:
         return emb
 
     async def _resolve_context_key(
-        self, context_text: str, precomputed_vector: Optional[np.ndarray] = None
+        self, context_text: str, precomputed_vector: Optional[Union[np.ndarray, Sequence[float]]] = None
     ) -> str:
         """
         Async variant of :meth:`_resolve_context_key`.
@@ -2075,7 +2077,7 @@ class AsyncBayesianRouter:
                 return self._hash_context_text(context_text)
 
         matched_key = await self._context_store.aget_nearest_context(
-            query_vector=vector,
+            query_vector=cast(Sequence[float], vector),
             similarity_threshold=self.similarity_threshold,
         )
 
@@ -2083,9 +2085,9 @@ class AsyncBayesianRouter:
             return matched_key
 
         new_key = f"ctx_{uuid.uuid4().hex}"
-        await self._context_store.aadd_context(new_key, vector)
+        await self._context_store.aadd_context(new_key, cast(Sequence[float], vector))
         if not self._custom_vector_store_active:
-            await self.storage.save_vector(new_key, vector)
+            await self.storage.save_vector(new_key, cast(Sequence[float], vector))
         return new_key
 
     async def get_prior(
@@ -3076,7 +3078,7 @@ class AsyncBayesianRouter:
                 else:
                     vectors = [self.embedder.embed_query(ctx) for ctx in contexts]
 
-                tool_params = {}
+                tool_params: Dict[str, Tuple[Any, Any]] = {}
                 if hasattr(self.storage, "aget_linear_params_batch"):
                     tool_params = await self.storage.aget_linear_params_batch(
                         candidates
@@ -3231,11 +3233,12 @@ class AsyncBayesianRouter:
                         if fb.get("context_text") is not None
                         else fb.get("context_key")
                     )
-                    candidate_name = fb.get("candidate_name")
-                    if not context_text or not candidate_name:
+                    candidate_name_val = fb.get("candidate_name")
+                    if not context_text or not candidate_name_val:
                         raise ValueError(
                             "Feedback must contain either 'trace_id' or context and candidate identifiers."
                         )
+                    candidate_name = str(candidate_name_val)
 
                     prepared_feedbacks.append(
                         {
@@ -3274,27 +3277,27 @@ class AsyncBayesianRouter:
                     prepared_feedbacks[idx]["context_key"] = key
 
             if self.mode == "clustering":
-                updates = []
+                clustering_updates: List[Tuple[str, str, float, float]] = []
                 for fb in prepared_feedbacks:
-                    updates.append(
+                    clustering_updates.append(
                         (
-                            fb["context_key"],
-                            fb["candidate_name"],
-                            self.decay_factor,
-                            fb["reward_val"],
+                            str(fb["context_key"]),
+                            str(fb["candidate_name"]),
+                            float(self.decay_factor),
+                            cast(float, fb["reward_val"]),
                         )
                     )
-                await self.storage.decay_and_update_batch(updates)
+                await self.storage.decay_and_update_batch(clustering_updates)
             elif self.hybrid:
-                updates = []
+                hybrid_updates: List[Tuple[str, float, float, np.ndarray, float, float, bool]] = []
                 for fb in prepared_feedbacks:
-                    candidate_name = fb["candidate_name"]
-                    reward_val = fb["reward_val"]
+                    candidate_name = str(fb["candidate_name"])
+                    reward_val = cast(float, fb["reward_val"])
                     t_a = await self._get_candidate_embedding(candidate_name)
 
                     if fb["type"] == "trace":
                         x_seq = await self._context_store.aget_context_vector(
-                            fb["context_key"]
+                            str(fb["context_key"])
                         )
                         if x_seq is None:
                             logger.warning(
@@ -3321,29 +3324,29 @@ class AsyncBayesianRouter:
                     else:
                         prior_p = 0.5
 
-                    updates.append(
+                    hybrid_updates.append(
                         (
                             "__shared_hybrid__",
-                            self.decay_factor,
+                            float(self.decay_factor),
                             reward_val,
                             x_augmented,
-                            self.lambda_val,
-                            prior_p,
-                            self.diagonal_covariance,
+                            float(self.lambda_val),
+                            float(prior_p),
+                            bool(self.diagonal_covariance),
                         )
                     )
 
-                await self.storage.adecay_and_update_linear_batch(updates)
+                await self.storage.adecay_and_update_linear_batch(hybrid_updates)
 
             else:
-                updates = []
+                linear_updates: List[Tuple[str, float, float, np.ndarray, float, float, bool]] = []
                 for fb in prepared_feedbacks:
-                    candidate_name = fb["candidate_name"]
-                    reward_val = fb["reward_val"]
+                    candidate_name = str(fb["candidate_name"])
+                    reward_val = cast(float, fb["reward_val"])
 
                     if fb["type"] == "trace":
                         x_seq = await self._context_store.aget_context_vector(
-                            fb["context_key"]
+                            str(fb["context_key"])
                         )
                         if x_seq is None:
                             logger.warning(
@@ -3370,27 +3373,28 @@ class AsyncBayesianRouter:
                     else:
                         prior_p = 0.5
 
-                    updates.append(
+                    linear_updates.append(
                         (
                             candidate_name,
-                            self.decay_factor,
+                            float(self.decay_factor),
                             reward_val,
                             x_augmented,
-                            self.lambda_val,
-                            prior_p,
-                            self.diagonal_covariance,
+                            float(self.lambda_val),
+                            float(prior_p),
+                            bool(self.diagonal_covariance),
                         )
                     )
 
-                await self.storage.adecay_and_update_linear_batch(updates)
+                await self.storage.adecay_and_update_linear_batch(linear_updates)
 
             # Log trace feedback
             for fb in feedbacks:
                 trace_id = fb.get("trace_id")
                 if trace_id is not None:
+                    reward = fb.get("reward")
                     reward_val = (
-                        float(fb.get("reward"))
-                        if fb.get("reward") is not None
+                        float(reward)
+                        if reward is not None
                         else (1.0 if fb.get("success") else 0.0)
                     )
                     await self.storage.log_feedback(trace_id, reward_val)

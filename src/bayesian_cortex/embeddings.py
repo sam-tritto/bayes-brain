@@ -732,6 +732,9 @@ class VectorContextStore:
             ref_norms = self._norms
             zero_norm_mask = self._zero_norm_mask
 
+        if ref_norms is None or ref_matrix is None or keys_list is None:
+            return None
+
         q_vec = np.array(query_vector, dtype=np.float32)
         q_norm = np.linalg.norm(q_vec)
         if q_norm == 0.0:
@@ -785,7 +788,7 @@ class SQLiteVectorStore:
 
     def _connect(self) -> sqlite3.Connection:
         try:
-            import sqlite_vec
+            import sqlite_vec  # type: ignore[import-untyped]
         except ImportError:
             raise ImportError(
                 "sqlite-vec is required for SQLiteVectorStore. "
@@ -959,6 +962,9 @@ class AsyncVectorContextStore:
             ref_matrix = self._matrix
             ref_norms = self._norms
             zero_norm_mask = self._zero_norm_mask
+
+        if ref_norms is None or ref_matrix is None or keys_list is None:
+            return None
 
         q_vec = np.array(query_vector, dtype=np.float32)
         q_norm = np.linalg.norm(q_vec)
@@ -1747,7 +1753,7 @@ class LlamaCppEmbedder:
             base = base[:-3]
         url = f"{base}/embedding"
 
-        embeddings = []
+        embeddings: List[Sequence[float]] = []
         for text in texts:
             payload = {"content": text}
             req = urllib.request.Request(
@@ -1822,7 +1828,7 @@ class LlamaCppEmbedder:
             base = base[:-3]
         url = f"{base}/embedding"
 
-        embeddings = []
+        embeddings: List[Sequence[float]] = []
         async with httpx.AsyncClient(timeout=30.0) as httpx_client:
             for text in texts:
                 response = await httpx_client.post(

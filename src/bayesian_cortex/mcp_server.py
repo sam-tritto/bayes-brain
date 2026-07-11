@@ -27,7 +27,7 @@ async def _get_all_beliefs(router: Union[BayesianRouter, AsyncBayesianRouter]) -
     )
 
     storage = router.storage
-    beliefs = {}
+    beliefs: Dict[str, Dict[str, Dict[str, float]]] = {}
 
     if isinstance(storage, AsyncInMemoryStorage):
         async with storage._lock:
@@ -61,13 +61,13 @@ async def _get_all_beliefs(router: Union[BayesianRouter, AsyncBayesianRouter]) -
             except Exception:
                 pass
     elif isinstance(storage, SQLiteStorage):
-        conn = sqlite3.connect(storage.db_path)
+        sync_conn = sqlite3.connect(storage.db_path)
         try:
-            cursor = conn.cursor()
-            cursor.execute(
+            sync_cursor = sync_conn.cursor()
+            sync_cursor.execute(
                 "SELECT context_key, candidate_name, alpha, beta FROM candidate_params"
             )
-            for ctx_key, candidate, alpha, beta in cursor.fetchall():
+            for ctx_key, candidate, alpha, beta in sync_cursor.fetchall():
                 if ctx_key not in beliefs:
                     beliefs[ctx_key] = {}
                 beliefs[ctx_key][candidate] = {
@@ -77,7 +77,7 @@ async def _get_all_beliefs(router: Union[BayesianRouter, AsyncBayesianRouter]) -
         except Exception:
             pass
         finally:
-            conn.close()
+            sync_conn.close()
 
     elif isinstance(storage, AsyncRedisStorage):
         try:
@@ -290,7 +290,7 @@ def generate_history_svg(
     Generate SVG plotting the moving average success rate over time.
     """
     try:
-        candidate_rewards = {t: [] for t in available_candidates}
+        candidate_rewards: Dict[str, List[float]] = {t: [] for t in available_candidates}
         history_points = []
 
         for idx, log in enumerate(logs):
@@ -299,7 +299,7 @@ def generate_history_svg(
             if c_name in candidate_rewards:
                 if reward is not None:
                     candidate_rewards[c_name].append(reward)
-                point_avgs = {}
+                point_avgs: Dict[str, Optional[float]] = {}
                 for t in available_candidates:
                     rewards = candidate_rewards[t]
                     if len(rewards) > 0:
@@ -555,9 +555,7 @@ def create_mcp_server(
                 )
                 if is_cold_start:
                     if hasattr(router, "get_prior"):
-                        import inspect
-
-                        if inspect.iscoroutinefunction(router.get_prior):
+                        if isinstance(router, AsyncBayesianRouter):
                             alpha, beta = await router.get_prior(
                                 context, candidate_name
                             )
@@ -653,7 +651,7 @@ def create_mcp_server(
                 lines.append("")
 
                 # Build full beliefs including defaults/priors for all available candidates
-                full_beliefs = {}
+                full_beliefs: Dict[str, Dict[str, Dict[str, float]]] = {}
                 for ctx_key, tools_beliefs in all_beliefs.items():
                     full_beliefs[ctx_key] = {}
                     for c_name in available_candidates:
@@ -706,7 +704,7 @@ def create_mcp_server(
             # Aggregate counts and success rates
             select_counts = dict.fromkeys(available_candidates, 0)
             feedback_counts = dict.fromkeys(available_candidates, 0)
-            rewards = {t: [] for t in available_candidates}
+            rewards: Dict[str, List[float]] = {t: [] for t in available_candidates}
 
             for log in logs:
                 c_name = log["candidate_name"]

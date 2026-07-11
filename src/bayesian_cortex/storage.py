@@ -173,7 +173,7 @@ class BaseStorage(abc.ABC):
         for c in candidate_names:
             val = self.get_linear_params(c)
             if val[0] is not None and val[1] is not None:
-                results[c] = val
+                results[c] = (val[0], val[1])
         return results
 
     def decay_and_update_linear_batch(
@@ -1024,9 +1024,9 @@ class SQLiteStorage(BaseStorage):
                     decay_factor * reward_vector
                     + (1.0 - decay_factor) * prior_reward_vector
                     + reward * x_augmented
-                )
+                ).astype(np.float32)
 
-                current_vals[candidate_name] = (new_precision, new_reward_vector)
+                current_vals[candidate_name] = (new_precision.astype(np.float32), new_reward_vector)
                 results.append((np.copy(new_precision), np.copy(new_reward_vector)))
 
             db_updates = []
@@ -1469,9 +1469,9 @@ class RedisStorage(BaseStorage):
                         decay_factor * reward_vector
                         + (1.0 - decay_factor) * prior_reward_vector
                         + reward * x_augmented
-                    )
+                    ).astype(np.float32)
 
-                    current_vals[candidate_name] = (new_precision, new_reward_vector)
+                    current_vals[candidate_name] = (new_precision.astype(np.float32), new_reward_vector)
                     results.append((np.copy(new_precision), np.copy(new_reward_vector)))
 
                 pipe.multi()
@@ -1722,7 +1722,7 @@ class AsyncBaseStorage(abc.ABC):
         for c in candidate_names:
             val = await self.aget_linear_params(c)
             if val[0] is not None and val[1] is not None:
-                results[c] = val
+                results[c] = (val[0], val[1])
         return results
 
     async def adecay_and_update_linear_batch(
@@ -2122,6 +2122,7 @@ class AsyncSQLiteStorage(AsyncBaseStorage):
         import random
         import sqlite3
 
+        sqlite_errors: Tuple[type, ...]
         try:
             import aiosqlite
 
@@ -2740,10 +2741,10 @@ class AsyncSQLiteStorage(AsyncBaseStorage):
                             decay_factor * reward_vector
                             + (1.0 - decay_factor) * prior_reward_vector
                             + reward * x_augmented
-                        )
+                        ).astype(np.float32)
 
                         current_vals[candidate_name] = (
-                            new_precision,
+                            new_precision.astype(np.float32),
                             new_reward_vector,
                         )
                         results.append(
@@ -3211,9 +3212,9 @@ class AsyncRedisStorage(AsyncBaseStorage):
                         decay_factor * reward_vector
                         + (1.0 - decay_factor) * prior_reward_vector
                         + reward * x_augmented
-                    )
+                    ).astype(np.float32)
 
-                    current_vals[candidate_name] = (new_precision, new_reward_vector)
+                    current_vals[candidate_name] = (new_precision.astype(np.float32), new_reward_vector)
                     results.append((np.copy(new_precision), np.copy(new_reward_vector)))
 
                 pipe.multi()
