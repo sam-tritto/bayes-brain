@@ -50,18 +50,25 @@ def _sample_theta(
 
     For diagonal covariance: samples each dimension independently from
     N(θ̂_i, v²/A_ii).  For full covariance: uses a Cholesky decomposition of
-    A⁻¹ with a multivariate_normal fallback when the matrix is near-singular.
+    the precision matrix and back-substitution with a multivariate_normal fallback
+    when Cholesky decomposition fails.
     """
     if diagonal_covariance:
         std_devs = exploration_weight / np.sqrt(precision)
         return np.random.normal(theta_hat, std_devs)
-    cov = np.linalg.inv(precision)
-    cov = 0.5 * (cov + cov.T)  # enforce symmetry
     try:
-        L = np.linalg.cholesky(cov)
+        # Compute Cholesky decomposition directly on precision matrix: precision = L_precision @ L_precision.T
+        L_precision = np.linalg.cholesky(precision)
         z = np.random.normal(size=d_aug)
-        return theta_hat + exploration_weight * np.dot(L, z)
-    except np.linalg.LinAlgError:
+        # Solve upper-triangular system L_precision.T v = z
+        from scipy.linalg import solve_triangular
+
+        v = solve_triangular(L_precision.T, z, lower=False)
+        return theta_hat + exploration_weight * v
+    except (np.linalg.LinAlgError, ValueError):
+        # Fallback to computing inverse covariance matrix and using multivariate_normal
+        cov = np.linalg.inv(precision)
+        cov = 0.5 * (cov + cov.T)
         return np.random.multivariate_normal(theta_hat, (exploration_weight**2) * cov)
 
 
@@ -581,7 +588,9 @@ class BayesianRouter:
             payload = json.loads(json_bytes.decode("utf-8"))
             return payload["ctx"], payload["candidate"]
         except Exception as e:
-            raise TamperDetectedError(f"Invalid or corrupted trace ID: {trace_id}") from e
+            raise TamperDetectedError(
+                f"Invalid or corrupted trace ID: {trace_id}"
+            ) from e
 
     def route(
         self,
@@ -2194,7 +2203,9 @@ class AsyncBayesianRouter:
             payload = json.loads(json_bytes.decode("utf-8"))
             return payload["ctx"], payload["candidate"]
         except Exception as e:
-            raise TamperDetectedError(f"Invalid or corrupted trace ID: {trace_id}") from e
+            raise TamperDetectedError(
+                f"Invalid or corrupted trace ID: {trace_id}"
+            ) from e
 
     async def _call_telemetry(
         self, event: str, exc: Exception, ctx: Dict[str, Any]
