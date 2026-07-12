@@ -157,6 +157,8 @@ class BayesianRouter:
         storage_backend: Optional[str] = None,
         storage_path: Optional[str] = None,
         storage_kwargs: Optional[Dict[str, Any]] = None,
+        candidates: Optional[List[str]] = None,
+        children: Optional[Dict[str, Union["BayesianRouter", Dict[str, Any]]]] = None,
     ) -> None:
         """
         Initialize the BayesianRouter.
@@ -334,6 +336,26 @@ class BayesianRouter:
                     "error before the router is used, otherwise all routing "
                     "history will be lost and the bandit will start from scratch."
                 ) from exc
+
+        self.candidates = candidates
+        self.children: Dict[str, "BayesianRouter"] = {}
+        if children is not None:
+            for child_name, child_val in children.items():
+                if isinstance(child_val, BayesianRouter):
+                    self.children[child_name] = child_val
+                elif isinstance(child_val, dict):
+                    child_kwargs = child_val.copy()
+                    if "storage" not in child_kwargs and "storage_backend" not in child_kwargs:
+                        child_kwargs["storage"] = self.storage
+                    if "embedder" not in child_kwargs:
+                        child_kwargs["embedder"] = self.embedder
+                    if "secret_key" not in child_kwargs:
+                        child_kwargs["secret_key"] = self.secret_key
+                    self.children[child_name] = BayesianRouter(**child_kwargs)
+                else:
+                    raise TypeError(
+                        f"Child router for candidate '{child_name}' must be a BayesianRouter instance or a configuration dictionary."
+                    )
 
     def _load_context_store(self) -> None:
         """Attempt to restore the VectorContextStore from the storage backend.
@@ -623,8 +645,10 @@ class BayesianRouter:
         if resolved_context is None:
             raise ValueError("Must provide either 'context_text' or 'context_key'")
 
-        if candidates is None:
-            raise ValueError("Must provide 'candidates'")
+        resolved_candidates = candidates if candidates is not None else self.candidates
+        if resolved_candidates is None:
+            raise ValueError("Must provide 'candidates' either at initialization or when routing")
+        candidates = resolved_candidates
 
         context_text = resolved_context
 
@@ -997,7 +1021,41 @@ class BayesianRouter:
             reward_val = 1.0 if success else 0.0
 
         try:
-            context_key, candidate_name = self._decode_trace_id(trace_id)
+            try:
+                context_key, candidate_name = self._decode_trace_id(trace_id)
+            except Exception as decode_err:
+                for child in self.children.values():
+                    try:
+                        return child.feedback_by_trace(
+                            trace_id, success=success, reward=reward, strict=strict
+                        )
+                    except TamperDetectedError:
+                        continue
+                    except Exception:
+                        if strict:
+                            raise
+                raise decode_err
+
+            is_parent_candidate = False
+            if self.candidates is not None:
+                is_parent_candidate = candidate_name in self.candidates
+            else:
+                is_parent_candidate = candidate_name in self.children
+
+            if not is_parent_candidate:
+                for child in self.children.values():
+                    if child.candidates is not None and candidate_name in child.candidates:
+                        return child.feedback_by_trace(
+                            trace_id, success=success, reward=reward, strict=strict
+                        )
+                    if child.children:
+                        try:
+                            return child.feedback_by_trace(
+                                trace_id, success=success, reward=reward, strict=strict
+                            )
+                        except Exception:
+                            pass
+
             self.storage.log_feedback(trace_id, reward_val)
             if self.mode == "clustering":
                 return self.storage.decay_and_update(
@@ -1248,9 +1306,10 @@ class BayesianRouter:
         contexts: List[str],
         candidates: Optional[List[str]] = None,
     ) -> List[str]:
-        if candidates is None:
-            raise ValueError("Must provide 'candidates'")
-        results = self.route_batch_with_trace(contexts, candidates=candidates)
+        resolved_candidates = candidates if candidates is not None else self.candidates
+        if resolved_candidates is None:
+            raise ValueError("Must provide 'candidates' either at initialization or when routing")
+        results = self.route_batch_with_trace(contexts, candidates=resolved_candidates)
         return [candidate for candidate, _ in results]
 
     def route_batch_with_trace(
@@ -1258,8 +1317,10 @@ class BayesianRouter:
         contexts: List[str],
         candidates: Optional[List[str]] = None,
     ) -> List[Tuple[str, str]]:
-        if candidates is None:
-            raise ValueError("Must provide 'candidates'")
+        resolved_candidates = candidates if candidates is not None else self.candidates
+        if resolved_candidates is None:
+            raise ValueError("Must provide 'candidates' either at initialization or when routing")
+        candidates = resolved_candidates
 
         if not candidates:
             raise ValueError("Candidates list cannot be empty")
@@ -1739,6 +1800,72 @@ class BayesianRouter:
                 except Exception as hook_err:
                     logger.error(f"Telemetry hook failed: {hook_err}")
 
+    def route_hierarchical(
+        self,
+        context_text: Optional[str] = None,
+        candidates: Optional[List[str]] = None,
+        context_key: Optional[str] = None,
+    ) -> Tuple[List[str], Dict[str, str]]:
+        """
+        Routes a request through the parent router and recursively down any child routers.
+
+        Returns:
+            Tuple[List[str], Dict[str, str]]:
+                - A list of candidate names representing the path taken (e.g., ["coder_subagent", "tool_python"])
+                - A dictionary mapping candidate names to their trace IDs (e.g., {"coder_subagent": "...", "tool_python": "..."})
+        """
+        resolved_candidates = candidates if candidates is not None else self.candidates
+        if resolved_candidates is None:
+            raise ValueError("Must provide 'candidates' either at initialization or when routing")
+
+        chosen_candidate, trace_id = self.route_with_trace(
+            context_text=context_text,
+            candidates=resolved_candidates,
+            context_key=context_key,
+        )
+
+        path = [chosen_candidate]
+        trace_ids = {chosen_candidate: trace_id}
+
+        if chosen_candidate in self.children:
+            child_router = self.children[chosen_candidate]
+            child_path, child_trace_ids = child_router.route_hierarchical(
+                context_text=context_text,
+                context_key=context_key,
+            )
+            path.extend(child_path)
+            trace_ids.update(child_trace_ids)
+
+        return path, trace_ids
+
+    @classmethod
+    def from_config(cls, config: Dict[str, Any]) -> "BayesianRouter":
+        """
+        Instantiate a BayesianRouter and recursively initialize any child routers configured under 'children'.
+        """
+        cfg = config.copy()
+        children_cfg = cfg.pop("children", None)
+        router = cls(**cfg)
+
+        if children_cfg is not None:
+            for child_name, child_val in children_cfg.items():
+                if isinstance(child_val, dict):
+                    cc = child_val.copy()
+                    if "storage" not in cc and "storage_backend" not in cc:
+                        cc["storage"] = router.storage
+                    if "embedder" not in cc:
+                        cc["embedder"] = router.embedder
+                    if "secret_key" not in cc:
+                        cc["secret_key"] = router.secret_key
+                    router.children[child_name] = cls.from_config(cc)
+                elif isinstance(child_val, cls):
+                    router.children[child_name] = child_val
+                else:
+                    raise TypeError(
+                        f"Child router for candidate '{child_name}' must be a {cls.__name__} instance or a configuration dictionary."
+                    )
+        return router
+
 
 class AsyncBayesianRouter:
     """
@@ -1774,6 +1901,8 @@ class AsyncBayesianRouter:
         storage_backend: Optional[str] = None,
         storage_path: Optional[str] = None,
         storage_kwargs: Optional[Dict[str, Any]] = None,
+        candidates: Optional[List[str]] = None,
+        children: Optional[Dict[str, Union["AsyncBayesianRouter", Dict[str, Any]]]] = None,
     ) -> None:
         """
         Initialize the AsyncBayesianRouter.
@@ -1925,6 +2054,26 @@ class AsyncBayesianRouter:
 
         self._initialized = False
         self._init_lock = asyncio.Lock()
+
+        self.candidates = candidates
+        self.children: Dict[str, "AsyncBayesianRouter"] = {}
+        if children is not None:
+            for child_name, child_val in children.items():
+                if isinstance(child_val, AsyncBayesianRouter):
+                    self.children[child_name] = child_val
+                elif isinstance(child_val, dict):
+                    child_kwargs = child_val.copy()
+                    if "storage" not in child_kwargs and "storage_backend" not in child_kwargs:
+                        child_kwargs["storage"] = self.storage
+                    if "embedder" not in child_kwargs:
+                        child_kwargs["embedder"] = self.embedder
+                    if "secret_key" not in child_kwargs:
+                        child_kwargs["secret_key"] = self.secret_key
+                    self.children[child_name] = AsyncBayesianRouter(**child_kwargs)
+                else:
+                    raise TypeError(
+                        f"Child router for candidate '{child_name}' must be an AsyncBayesianRouter instance or a configuration dictionary."
+                    )
 
     async def _ensure_initialized(self) -> None:
         if self._initialized:
@@ -2245,8 +2394,10 @@ class AsyncBayesianRouter:
         if resolved_context is None:
             raise ValueError("Must provide either 'context_text' or 'context_key'")
 
-        if candidates is None:
-            raise ValueError("Must provide 'candidates'")
+        resolved_candidates = candidates if candidates is not None else self.candidates
+        if resolved_candidates is None:
+            raise ValueError("Must provide 'candidates' either at initialization or when routing")
+        candidates = resolved_candidates
 
         context_text = resolved_context
 
@@ -2623,7 +2774,41 @@ class AsyncBayesianRouter:
         await self._ensure_initialized()
 
         try:
-            context_key, candidate_name = self._decode_trace_id(trace_id)
+            try:
+                context_key, candidate_name = self._decode_trace_id(trace_id)
+            except Exception as decode_err:
+                for child in self.children.values():
+                    try:
+                        return await child.afeedback_by_trace(
+                            trace_id, success=success, reward=reward, strict=strict
+                        )
+                    except TamperDetectedError:
+                        continue
+                    except Exception:
+                        if strict:
+                            raise
+                raise decode_err
+
+            is_parent_candidate = False
+            if self.candidates is not None:
+                is_parent_candidate = candidate_name in self.candidates
+            else:
+                is_parent_candidate = candidate_name in self.children
+
+            if not is_parent_candidate:
+                for child in self.children.values():
+                    if child.candidates is not None and candidate_name in child.candidates:
+                        return await child.afeedback_by_trace(
+                            trace_id, success=success, reward=reward, strict=strict
+                        )
+                    if child.children:
+                        try:
+                            return await child.afeedback_by_trace(
+                                trace_id, success=success, reward=reward, strict=strict
+                            )
+                        except Exception:
+                            pass
+
             await self.storage.log_feedback(trace_id, reward_val)
             if self.mode == "clustering":
                 return await self.storage.decay_and_update(
@@ -2890,9 +3075,10 @@ class AsyncBayesianRouter:
         contexts: List[str],
         candidates: Optional[List[str]] = None,
     ) -> List[str]:
-        if candidates is None:
-            raise ValueError("Must provide 'candidates'")
-        results = await self.aroute_batch_with_trace(contexts, candidates=candidates)
+        resolved_candidates = candidates if candidates is not None else self.candidates
+        if resolved_candidates is None:
+            raise ValueError("Must provide 'candidates' either at initialization or when routing")
+        results = await self.aroute_batch_with_trace(contexts, candidates=resolved_candidates)
         return [candidate for candidate, _ in results]
 
     async def aroute_batch_with_trace(
@@ -2900,8 +3086,10 @@ class AsyncBayesianRouter:
         contexts: List[str],
         candidates: Optional[List[str]] = None,
     ) -> List[Tuple[str, str]]:
-        if candidates is None:
-            raise ValueError("Must provide 'candidates'")
+        resolved_candidates = candidates if candidates is not None else self.candidates
+        if resolved_candidates is None:
+            raise ValueError("Must provide 'candidates' either at initialization or when routing")
+        candidates = resolved_candidates
 
         if not candidates:
             raise ValueError("Candidates list cannot be empty")
@@ -3404,3 +3592,69 @@ class AsyncBayesianRouter:
             await self._call_telemetry(
                 "feedback_batch_failure", e, {"feedbacks": feedbacks}
             )
+
+    async def aroute_hierarchical(
+        self,
+        context_text: Optional[str] = None,
+        candidates: Optional[List[str]] = None,
+        context_key: Optional[str] = None,
+    ) -> Tuple[List[str], Dict[str, str]]:
+        """
+        Routes a request through the parent router and recursively down any child routers.
+
+        Returns:
+            Tuple[List[str], Dict[str, str]]:
+                - A list of candidate names representing the path taken
+                - A dictionary mapping candidate names to their trace IDs
+        """
+        resolved_candidates = candidates if candidates is not None else self.candidates
+        if resolved_candidates is None:
+            raise ValueError("Must provide 'candidates' either at initialization or when routing")
+
+        chosen_candidate, trace_id = await self.aroute_with_trace(
+            context_text=context_text,
+            candidates=resolved_candidates,
+            context_key=context_key,
+        )
+
+        path = [chosen_candidate]
+        trace_ids = {chosen_candidate: trace_id}
+
+        if chosen_candidate in self.children:
+            child_router = self.children[chosen_candidate]
+            child_path, child_trace_ids = await child_router.aroute_hierarchical(
+                context_text=context_text,
+                context_key=context_key,
+            )
+            path.extend(child_path)
+            trace_ids.update(child_trace_ids)
+
+        return path, trace_ids
+
+    @classmethod
+    def from_config(cls, config: Dict[str, Any]) -> "AsyncBayesianRouter":
+        """
+        Instantiate an AsyncBayesianRouter and recursively initialize any child routers configured under 'children'.
+        """
+        cfg = config.copy()
+        children_cfg = cfg.pop("children", None)
+        router = cls(**cfg)
+
+        if children_cfg is not None:
+            for child_name, child_val in children_cfg.items():
+                if isinstance(child_val, dict):
+                    cc = child_val.copy()
+                    if "storage" not in cc and "storage_backend" not in cc:
+                        cc["storage"] = router.storage
+                    if "embedder" not in cc:
+                        cc["embedder"] = router.embedder
+                    if "secret_key" not in cc:
+                        cc["secret_key"] = router.secret_key
+                    router.children[child_name] = cls.from_config(cc)
+                elif isinstance(child_val, cls):
+                    router.children[child_name] = child_val
+                else:
+                    raise TypeError(
+                        f"Child router for candidate '{child_name}' must be an {cls.__name__} instance or a configuration dictionary."
+                    )
+        return router

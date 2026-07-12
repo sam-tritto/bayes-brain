@@ -747,6 +747,80 @@ def handle_production_feedback(run_id: str, trace_id: str, feedback_score: float
 
 ---
 
+## Hierarchical Routing & Nested Configurations
+
+In complex architectures, sub-agents are often nested within a parent supervisor. For example, a root router might choose between a `coder_subagent` and a `research_subagent`, and the `coder_subagent` might then route among specific coder tools like `python_tool` or `git_tool`.
+
+BayesianCortex natively supports this hierarchical layout, allowing you to configure nested routers from a single schema and route through the entire tree automatically.
+
+### 1. Nested Initialization
+
+You can define nested sub-routers directly inside a parent configuration dictionary using the `children` key. Child routers automatically inherit the parent's `storage`, `embedder`, and `secret_key` configurations if not explicitly specified.
+
+```python
+from bayesian_cortex import BayesianRouter
+
+config = {
+    "mode": "clustering",
+    "storage_backend": "sqlite",
+    "storage_path": "agent_hierarchy.db",
+    "candidates": ["coder_subagent", "research_subagent"],
+    "children": {
+        "coder_subagent": {
+            "mode": "clustering",
+            "candidates": ["tool_python", "tool_git"],
+        },
+        "research_subagent": {
+            "mode": "clustering",
+            "candidates": ["tool_web_search", "tool_database"],
+        }
+    }
+}
+
+# Recursively instantiates the parent and all nested children routers
+root_router = BayesianRouter.from_config(config)
+```
+
+### 2. Fallback Candidate Lists
+By providing `candidates` at initialization time (as shown above), you no longer need to pass the candidates list on every single `.route()` or `.route_batch()` call:
+
+```python
+# Automatically routes among root candidates ["coder_subagent", "research_subagent"]
+chosen_arm = root_router.route(context_text="Write an script to download logs")
+```
+
+### 3. Traversal via `route_hierarchical`
+
+To route context down the entire tree of sub-agents and tools at once, use `route_hierarchical` (or `aroute_hierarchical` for async routers). This method returns a list of candidate names representing the path taken, and a dictionary of trace IDs corresponding to each level:
+
+```python
+# Route the request through the supervisor to the sub-agent and tool level
+path, trace_ids = root_router.route_hierarchical(context_text="Optimize my SQLite schema")
+
+print(path)
+# Output: ["coder_subagent", "tool_python"]
+
+print(trace_ids)
+# Output: {
+#   "coder_subagent": "eyJjdHgiOiA... (parent trace ID)",
+#   "tool_python": "eyJjdHgiOiA... (child trace ID)"
+# }
+```
+
+### 4. Cascading Feedback Delegation
+
+When logging evaluations or downstream results, you can call `feedback_by_trace()` directly on the **root router**, regardless of whether the trace ID belongs to the parent router or a child router. The root router automatically checks child configurations and forwards the feedback request downstream to update the correct sub-bandit.
+
+```python
+# Update the root supervisor's performance score for choosing "coder_subagent"
+root_router.feedback_by_trace(trace_ids["coder_subagent"], success=True)
+
+# Update the child coder's tool selection score for using "tool_python"
+root_router.feedback_by_trace(trace_ids["tool_python"], success=True)
+```
+
+---
+
 ## Changelog
 
 See [CHANGELOG.md](CHANGELOG.md) for a full history of releases.

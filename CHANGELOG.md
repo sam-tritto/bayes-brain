@@ -11,6 +11,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - **LangSmith Integration Guide**: Documented patterns for dynamic trace enrichment (bandit state metadata and tags) and automated closed-loop feedback pipelines via LangSmith.
+- **Hierarchical/Nested Routing**: Natively support nested parent-child configuration schemas out of the box in `BayesianRouter` and `AsyncBayesianRouter`. Added support for defining children configurations during initialization or via a new `from_config` classmethod.
+- **Cascading Feedback Delegation**: `feedback_by_trace` and `afeedback_by_trace` now automatically detect if a trace belongs to a child router in the hierarchy and delegate the feedback/updates downstream.
+- **Fallback Candidate Lists**: Added support for storing `candidates` at initialization time so that it is no longer required on every single `route` or `route_batch` call.
 
 ## [0.1.4] — 2026-07-10
 
