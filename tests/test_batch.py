@@ -338,7 +338,9 @@ def test_router_batch_feedback_linear_no_double_embedding(mem_storage):
 
 
 @pytest.mark.anyio
-async def test_async_router_batch_feedback_linear_no_double_embedding(async_mem_storage):
+async def test_async_router_batch_feedback_linear_no_double_embedding(
+    async_mem_storage,
+):
     embedder = TrackingMockEmbedder()
     router = AsyncBayesianRouter(
         storage=async_mem_storage,

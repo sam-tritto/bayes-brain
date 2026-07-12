@@ -42,7 +42,9 @@ def test_sync_trace_id_manipulation(mem_storage):
     tampered_trace_id = f"{tampered_payload}.{sig_part}"
 
     # Verify that calling feedback_by_trace under strict mode raises a TamperDetectedError
-    with pytest.raises(TamperDetectedError, match="Invalid or corrupted trace ID") as exc_info:
+    with pytest.raises(
+        TamperDetectedError, match="Invalid or corrupted trace ID"
+    ) as exc_info:
         router.feedback_by_trace(tampered_trace_id, success=True, strict=True)
 
     # Check exception hierarchy
@@ -82,7 +84,9 @@ async def test_async_trace_id_manipulation(async_mem_storage):
     tampered_trace_id = f"{tampered_payload}.{sig_part}"
 
     # Verify that calling afeedback_by_trace under strict mode raises a TamperDetectedError
-    with pytest.raises(TamperDetectedError, match="Invalid or corrupted trace ID") as exc_info:
+    with pytest.raises(
+        TamperDetectedError, match="Invalid or corrupted trace ID"
+    ) as exc_info:
         await router.afeedback_by_trace(tampered_trace_id, success=True, strict=True)
 
     # Check exception hierarchy

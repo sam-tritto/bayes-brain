@@ -462,7 +462,9 @@ class InMemoryStorage(BaseStorage):
             return sorted(self._selection_logs.values(), key=lambda x: x["timestamp"])
 
 
-def _retry_on_lock(max_retries: int = 5, initial_delay: float = 0.05, max_delay: float = 1.0):
+def _retry_on_lock(
+    max_retries: int = 5, initial_delay: float = 0.05, max_delay: float = 1.0
+):
     """
     Decorator to retry synchronous database operations that fail due to locking.
     Uses exponential backoff with jitter.
@@ -484,7 +486,9 @@ def _retry_on_lock(max_retries: int = 5, initial_delay: float = 0.05, max_delay:
                     sleep_time = delay * (0.5 + random.random())
                     time.sleep(sleep_time)
                     delay = min(delay * 2, max_delay)
+
         return wrapper
+
     return decorator
 
 
@@ -1026,7 +1030,10 @@ class SQLiteStorage(BaseStorage):
                     + reward * x_augmented
                 ).astype(np.float32)
 
-                current_vals[candidate_name] = (new_precision.astype(np.float32), new_reward_vector)
+                current_vals[candidate_name] = (
+                    new_precision.astype(np.float32),
+                    new_reward_vector,
+                )
                 results.append((np.copy(new_precision), np.copy(new_reward_vector)))
 
             db_updates = []
@@ -1471,7 +1478,10 @@ class RedisStorage(BaseStorage):
                         + reward * x_augmented
                     ).astype(np.float32)
 
-                    current_vals[candidate_name] = (new_precision.astype(np.float32), new_reward_vector)
+                    current_vals[candidate_name] = (
+                        new_precision.astype(np.float32),
+                        new_reward_vector,
+                    )
                     results.append((np.copy(new_precision), np.copy(new_reward_vector)))
 
                 pipe.multi()
@@ -3214,7 +3224,10 @@ class AsyncRedisStorage(AsyncBaseStorage):
                         + reward * x_augmented
                     ).astype(np.float32)
 
-                    current_vals[candidate_name] = (new_precision.astype(np.float32), new_reward_vector)
+                    current_vals[candidate_name] = (
+                        new_precision.astype(np.float32),
+                        new_reward_vector,
+                    )
                     results.append((np.copy(new_precision), np.copy(new_reward_vector)))
 
                 pipe.multi()

@@ -228,7 +228,8 @@ async def test_async_lints_routing_and_feedback(async_sqlite_storage, det_embedd
 
 def test_linear_numerical_safety():
     import numpy as np
-    from bayesian_cortex.router import _linear_score, _linear_posterior
+
+    from bayesian_cortex.router import _linear_posterior, _linear_score
 
     x = np.array([1.0])
     theta = np.array([0.5])
@@ -250,7 +251,9 @@ def test_linear_numerical_safety():
     expected_reward, uncertainty = _linear_posterior(
         x_augmented=x,
         precision=precision,
-        reward_vector=np.array([-0.5]),  # theta_hat = solve(precision, reward_vector) -> -0.5 / -1.0 = 0.5
+        reward_vector=np.array(
+            [-0.5]
+        ),  # theta_hat = solve(precision, reward_vector) -> -0.5 / -1.0 = 0.5
         diagonal_covariance=False,
     )
     assert not np.isnan(expected_reward)

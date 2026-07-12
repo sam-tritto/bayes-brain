@@ -21,6 +21,7 @@ from bayesian_cortex.embeddings import (
 from bayesian_cortex.exceptions import (
     BayesianCortexError,
     EmbeddingError,
+    OutlierContextError,
     TamperDetectedError,
 )
 from bayesian_cortex.storage import (
@@ -159,6 +160,8 @@ class BayesianRouter:
         storage_kwargs: Optional[Dict[str, Any]] = None,
         candidates: Optional[List[str]] = None,
         children: Optional[Dict[str, Union["BayesianRouter", Dict[str, Any]]]] = None,
+        outlier_threshold: Optional[float] = None,
+        outlier_fallback_behavior: str = "route_to_fallback",
     ) -> None:
         """
         Initialize the BayesianRouter.
@@ -212,6 +215,8 @@ class BayesianRouter:
         self.embedder = embedder
         self.fallback_candidate = fallback_candidate
         self.telemetry_hook = telemetry_hook
+        self.outlier_threshold = outlier_threshold
+        self.outlier_fallback_behavior = outlier_fallback_behavior
 
         self.mode = mode
         if mode not in ("clustering", "lints", "linucb"):
@@ -345,7 +350,10 @@ class BayesianRouter:
                     self.children[child_name] = child_val
                 elif isinstance(child_val, dict):
                     child_kwargs = child_val.copy()
-                    if "storage" not in child_kwargs and "storage_backend" not in child_kwargs:
+                    if (
+                        "storage" not in child_kwargs
+                        and "storage_backend" not in child_kwargs
+                    ):
                         child_kwargs["storage"] = self.storage
                     if "embedder" not in child_kwargs:
                         child_kwargs["embedder"] = self.embedder
@@ -460,7 +468,9 @@ class BayesianRouter:
         return emb
 
     def _resolve_context_key(
-        self, context_text: str, precomputed_vector: Optional[Union[np.ndarray, Sequence[float]]] = None
+        self,
+        context_text: str,
+        precomputed_vector: Optional[Union[np.ndarray, Sequence[float]]] = None,
     ) -> str:
         """
         Resolve the given raw context string into a normalized context key.
@@ -497,12 +507,39 @@ class BayesianRouter:
         if matched_key is not None:
             return matched_key
 
+        if self.outlier_threshold is not None:
+            # Check if context store has any items by querying with a very low threshold
+            closest_any_key = self._context_store.get_nearest_context(
+                query_vector=cast(Sequence[float], vector),
+                similarity_threshold=-2.0,
+            )
+            if closest_any_key is not None:
+                # Store is not empty, check if vector matches outlier threshold
+                in_distribution_key = self._context_store.get_nearest_context(
+                    query_vector=cast(Sequence[float], vector),
+                    similarity_threshold=self.outlier_threshold,
+                )
+                if in_distribution_key is None:
+                    return "__outlier_fallback__"
+
         # No match found: spawn a new context cluster and save it
         new_key = f"ctx_{uuid.uuid4().hex}"
         self._context_store.add_context(new_key, cast(Sequence[float], vector))
         if not self._custom_vector_store_active:
             self.storage.save_vector(new_key, cast(Sequence[float], vector))
         return new_key
+
+    def _handle_outlier_fallback(self, candidates: List[str]) -> Tuple[str, str]:
+        if self.outlier_fallback_behavior == "raise":
+            raise OutlierContextError("Incoming context vector is an outlier.")
+        outlier_choice = (
+            self.fallback_candidate
+            if (self.fallback_candidate and self.fallback_candidate in candidates)
+            else candidates[0]
+        )
+        trace_id = self._generate_trace_id("__outlier_fallback__", outlier_choice)
+        self.storage.log_selection(trace_id, "__outlier_fallback__", outlier_choice)
+        return outlier_choice, trace_id
 
     def get_prior(self, context_text: str, candidate_name: str) -> Tuple[float, float]:
         """
@@ -647,7 +684,9 @@ class BayesianRouter:
 
         resolved_candidates = candidates if candidates is not None else self.candidates
         if resolved_candidates is None:
-            raise ValueError("Must provide 'candidates' either at initialization or when routing")
+            raise ValueError(
+                "Must provide 'candidates' either at initialization or when routing"
+            )
         candidates = resolved_candidates
 
         context_text = resolved_context
@@ -658,6 +697,8 @@ class BayesianRouter:
         try:
             if self.mode == "clustering":
                 context_key = self._resolve_context_key(context_text)
+                if context_key == "__outlier_fallback__":
+                    return self._handle_outlier_fallback(candidates)
                 best_candidate = None
                 highest_sample = -1.0
 
@@ -702,6 +743,8 @@ class BayesianRouter:
                 context_key = self._resolve_context_key(
                     context_text, precomputed_vector=x_c
                 )
+                if context_key == "__outlier_fallback__":
+                    return self._handle_outlier_fallback(candidates)
 
                 if not candidates:
                     raise ValueError("Candidate candidates list cannot be empty")
@@ -774,6 +817,8 @@ class BayesianRouter:
                 context_key = self._resolve_context_key(
                     context_text, precomputed_vector=x
                 )
+                if context_key == "__outlier_fallback__":
+                    return self._handle_outlier_fallback(candidates)
                 x_augmented = np.append(x, 1.0)
                 d_aug = d + 1
 
@@ -835,6 +880,8 @@ class BayesianRouter:
                 self.storage.log_selection(trace_id, context_key, best_candidate)
                 return best_candidate, trace_id
 
+        except OutlierContextError:
+            raise
         except Exception as e:
             logger.exception(
                 "BayesianRouter routing failed. Triggering fail-safe fallback."
@@ -1044,7 +1091,10 @@ class BayesianRouter:
 
             if not is_parent_candidate:
                 for child in self.children.values():
-                    if child.candidates is not None and candidate_name in child.candidates:
+                    if (
+                        child.candidates is not None
+                        and candidate_name in child.candidates
+                    ):
                         return child.feedback_by_trace(
                             trace_id, success=success, reward=reward, strict=strict
                         )
@@ -1286,11 +1336,28 @@ class BayesianRouter:
             if matched_key is not None:
                 resolved_keys.append(matched_key)
             else:
-                new_key = f"ctx_{uuid.uuid4().hex}"
-                self._context_store.add_context(new_key, vector)
-                if not self._custom_vector_store_active:
-                    new_contexts_to_save.append((new_key, vector))
-                resolved_keys.append(new_key)
+                is_outlier = False
+                if self.outlier_threshold is not None:
+                    closest_any_key = self._context_store.get_nearest_context(
+                        query_vector=vector,
+                        similarity_threshold=-2.0,
+                    )
+                    if closest_any_key is not None:
+                        in_distribution_key = self._context_store.get_nearest_context(
+                            query_vector=vector,
+                            similarity_threshold=self.outlier_threshold,
+                        )
+                        if in_distribution_key is None:
+                            is_outlier = True
+
+                if is_outlier:
+                    resolved_keys.append("__outlier_fallback__")
+                else:
+                    new_key = f"ctx_{uuid.uuid4().hex}"
+                    self._context_store.add_context(new_key, vector)
+                    if not self._custom_vector_store_active:
+                        new_contexts_to_save.append((new_key, vector))
+                    resolved_keys.append(new_key)
 
         if new_contexts_to_save:
             if hasattr(self.storage, "save_vectors"):
@@ -1308,7 +1375,9 @@ class BayesianRouter:
     ) -> List[str]:
         resolved_candidates = candidates if candidates is not None else self.candidates
         if resolved_candidates is None:
-            raise ValueError("Must provide 'candidates' either at initialization or when routing")
+            raise ValueError(
+                "Must provide 'candidates' either at initialization or when routing"
+            )
         results = self.route_batch_with_trace(contexts, candidates=resolved_candidates)
         return [candidate for candidate, _ in results]
 
@@ -1319,7 +1388,9 @@ class BayesianRouter:
     ) -> List[Tuple[str, str]]:
         resolved_candidates = candidates if candidates is not None else self.candidates
         if resolved_candidates is None:
-            raise ValueError("Must provide 'candidates' either at initialization or when routing")
+            raise ValueError(
+                "Must provide 'candidates' either at initialization or when routing"
+            )
         candidates = resolved_candidates
 
         if not candidates:
@@ -1342,6 +1413,27 @@ class BayesianRouter:
                 results = []
                 for idx, context_key in enumerate(context_keys):
                     context_text = contexts[idx]
+                    if context_key == "__outlier_fallback__":
+                        if self.outlier_fallback_behavior == "raise":
+                            raise OutlierContextError(
+                                "Incoming context vector is an outlier."
+                            )
+                        outlier_choice = (
+                            self.fallback_candidate
+                            if (
+                                self.fallback_candidate
+                                and self.fallback_candidate in candidates
+                            )
+                            else candidates[0]
+                        )
+                        trace_id = self._generate_trace_id(
+                            "__outlier_fallback__", outlier_choice
+                        )
+                        self.storage.log_selection(
+                            trace_id, "__outlier_fallback__", outlier_choice
+                        )
+                        results.append((outlier_choice, trace_id))
+                        continue
                     best_candidate = None
                     highest_sample = -1.0
 
@@ -1425,6 +1517,27 @@ class BayesianRouter:
                 for idx, x_seq in enumerate(vectors):
                     x_c = np.array(x_seq, dtype=np.float32)
                     context_key = context_keys[idx]
+                    if context_key == "__outlier_fallback__":
+                        if self.outlier_fallback_behavior == "raise":
+                            raise OutlierContextError(
+                                "Incoming context vector is an outlier."
+                            )
+                        outlier_choice = (
+                            self.fallback_candidate
+                            if (
+                                self.fallback_candidate
+                                and self.fallback_candidate in candidates
+                            )
+                            else candidates[0]
+                        )
+                        trace_id = self._generate_trace_id(
+                            "__outlier_fallback__", outlier_choice
+                        )
+                        self.storage.log_selection(
+                            trace_id, "__outlier_fallback__", outlier_choice
+                        )
+                        results.append((outlier_choice, trace_id))
+                        continue
 
                     theta_sample = (
                         _sample_theta(
@@ -1495,6 +1608,27 @@ class BayesianRouter:
                     d_aug = d + 1
                     context_key = context_keys[idx]
                     context_text = contexts[idx]
+                    if context_key == "__outlier_fallback__":
+                        if self.outlier_fallback_behavior == "raise":
+                            raise OutlierContextError(
+                                "Incoming context vector is an outlier."
+                            )
+                        outlier_choice = (
+                            self.fallback_candidate
+                            if (
+                                self.fallback_candidate
+                                and self.fallback_candidate in candidates
+                            )
+                            else candidates[0]
+                        )
+                        trace_id = self._generate_trace_id(
+                            "__outlier_fallback__", outlier_choice
+                        )
+                        self.storage.log_selection(
+                            trace_id, "__outlier_fallback__", outlier_choice
+                        )
+                        results.append((outlier_choice, trace_id))
+                        continue
 
                     best_candidate = None
                     highest_score = -float("inf")
@@ -1556,6 +1690,8 @@ class BayesianRouter:
 
                 return results
 
+        except OutlierContextError:
+            raise
         except Exception as e:
             logger.exception(
                 "BayesianRouter batch routing failed. Triggering fail-safe fallback."
@@ -1680,7 +1816,9 @@ class BayesianRouter:
                     )
                 self.storage.decay_and_update_batch(clustering_updates)
             elif self.hybrid:
-                hybrid_updates: List[Tuple[str, float, float, np.ndarray, float, float, bool]] = []
+                hybrid_updates: List[
+                    Tuple[str, float, float, np.ndarray, float, float, bool]
+                ] = []
                 for fb in prepared_feedbacks:
                     candidate_name = str(fb["candidate_name"])
                     reward_val = cast(float, fb["reward_val"])
@@ -1730,7 +1868,9 @@ class BayesianRouter:
                 self.storage.decay_and_update_linear_batch(hybrid_updates)
 
             else:
-                linear_updates: List[Tuple[str, float, float, np.ndarray, float, float, bool]] = []
+                linear_updates: List[
+                    Tuple[str, float, float, np.ndarray, float, float, bool]
+                ] = []
                 for fb in prepared_feedbacks:
                     candidate_name = str(fb["candidate_name"])
                     reward_val = cast(float, fb["reward_val"])
@@ -1816,7 +1956,9 @@ class BayesianRouter:
         """
         resolved_candidates = candidates if candidates is not None else self.candidates
         if resolved_candidates is None:
-            raise ValueError("Must provide 'candidates' either at initialization or when routing")
+            raise ValueError(
+                "Must provide 'candidates' either at initialization or when routing"
+            )
 
         chosen_candidate, trace_id = self.route_with_trace(
             context_text=context_text,
@@ -1902,7 +2044,11 @@ class AsyncBayesianRouter:
         storage_path: Optional[str] = None,
         storage_kwargs: Optional[Dict[str, Any]] = None,
         candidates: Optional[List[str]] = None,
-        children: Optional[Dict[str, Union["AsyncBayesianRouter", Dict[str, Any]]]] = None,
+        children: Optional[
+            Dict[str, Union["AsyncBayesianRouter", Dict[str, Any]]]
+        ] = None,
+        outlier_threshold: Optional[float] = None,
+        outlier_fallback_behavior: str = "route_to_fallback",
     ) -> None:
         """
         Initialize the AsyncBayesianRouter.
@@ -1936,6 +2082,8 @@ class AsyncBayesianRouter:
         self.embedder = embedder
         self.fallback_candidate = fallback_candidate
         self.telemetry_hook = telemetry_hook
+        self.outlier_threshold = outlier_threshold
+        self.outlier_fallback_behavior = outlier_fallback_behavior
 
         self.mode = mode
         if mode not in ("clustering", "lints", "linucb"):
@@ -2063,7 +2211,10 @@ class AsyncBayesianRouter:
                     self.children[child_name] = child_val
                 elif isinstance(child_val, dict):
                     child_kwargs = child_val.copy()
-                    if "storage" not in child_kwargs and "storage_backend" not in child_kwargs:
+                    if (
+                        "storage" not in child_kwargs
+                        and "storage_backend" not in child_kwargs
+                    ):
                         child_kwargs["storage"] = self.storage
                     if "embedder" not in child_kwargs:
                         child_kwargs["embedder"] = self.embedder
@@ -2197,7 +2348,9 @@ class AsyncBayesianRouter:
         return emb
 
     async def _resolve_context_key(
-        self, context_text: str, precomputed_vector: Optional[Union[np.ndarray, Sequence[float]]] = None
+        self,
+        context_text: str,
+        precomputed_vector: Optional[Union[np.ndarray, Sequence[float]]] = None,
     ) -> str:
         """
         Async variant of :meth:`_resolve_context_key`.
@@ -2233,11 +2386,40 @@ class AsyncBayesianRouter:
         if matched_key is not None:
             return matched_key
 
+        if self.outlier_threshold is not None:
+            # Check if context store has any items by querying with a very low threshold
+            closest_any_key = await self._context_store.aget_nearest_context(
+                query_vector=cast(Sequence[float], vector),
+                similarity_threshold=-2.0,
+            )
+            if closest_any_key is not None:
+                # Store is not empty, check if vector matches outlier threshold
+                in_distribution_key = await self._context_store.aget_nearest_context(
+                    query_vector=cast(Sequence[float], vector),
+                    similarity_threshold=self.outlier_threshold,
+                )
+                if in_distribution_key is None:
+                    return "__outlier_fallback__"
+
         new_key = f"ctx_{uuid.uuid4().hex}"
         await self._context_store.aadd_context(new_key, cast(Sequence[float], vector))
         if not self._custom_vector_store_active:
             await self.storage.save_vector(new_key, cast(Sequence[float], vector))
         return new_key
+
+    async def _ahandle_outlier_fallback(self, candidates: List[str]) -> Tuple[str, str]:
+        if self.outlier_fallback_behavior == "raise":
+            raise OutlierContextError("Incoming context vector is an outlier.")
+        outlier_choice = (
+            self.fallback_candidate
+            if (self.fallback_candidate and self.fallback_candidate in candidates)
+            else candidates[0]
+        )
+        trace_id = self._generate_trace_id("__outlier_fallback__", outlier_choice)
+        await self.storage.log_selection(
+            trace_id, "__outlier_fallback__", outlier_choice
+        )
+        return outlier_choice, trace_id
 
     async def get_prior(
         self, context_text: str, candidate_name: str
@@ -2396,7 +2578,9 @@ class AsyncBayesianRouter:
 
         resolved_candidates = candidates if candidates is not None else self.candidates
         if resolved_candidates is None:
-            raise ValueError("Must provide 'candidates' either at initialization or when routing")
+            raise ValueError(
+                "Must provide 'candidates' either at initialization or when routing"
+            )
         candidates = resolved_candidates
 
         context_text = resolved_context
@@ -2409,6 +2593,8 @@ class AsyncBayesianRouter:
         try:
             if self.mode == "clustering":
                 context_key = await self._resolve_context_key(context_text)
+                if context_key == "__outlier_fallback__":
+                    return await self._ahandle_outlier_fallback(candidates)
                 best_candidate = None
                 highest_sample = -1.0
 
@@ -2456,6 +2642,8 @@ class AsyncBayesianRouter:
                 context_key = await self._resolve_context_key(
                     context_text, precomputed_vector=x_c
                 )
+                if context_key == "__outlier_fallback__":
+                    return await self._ahandle_outlier_fallback(candidates)
 
                 if not candidates:
                     raise ValueError("Candidate candidates list cannot be empty")
@@ -2534,6 +2722,8 @@ class AsyncBayesianRouter:
                 context_key = await self._resolve_context_key(
                     context_text, precomputed_vector=x
                 )
+                if context_key == "__outlier_fallback__":
+                    return await self._ahandle_outlier_fallback(candidates)
                 x_augmented = np.append(x, 1.0)
                 d_aug = d + 1
 
@@ -2595,6 +2785,8 @@ class AsyncBayesianRouter:
                 await self.storage.log_selection(trace_id, context_key, best_candidate)
                 return best_candidate, trace_id
 
+        except OutlierContextError:
+            raise
         except Exception as e:
             logger.exception(
                 "AsyncBayesianRouter routing failed. Triggering fail-safe fallback."
@@ -2797,7 +2989,10 @@ class AsyncBayesianRouter:
 
             if not is_parent_candidate:
                 for child in self.children.values():
-                    if child.candidates is not None and candidate_name in child.candidates:
+                    if (
+                        child.candidates is not None
+                        and candidate_name in child.candidates
+                    ):
                         return await child.afeedback_by_trace(
                             trace_id, success=success, reward=reward, strict=strict
                         )
@@ -3053,11 +3248,30 @@ class AsyncBayesianRouter:
             if matched_key is not None:
                 resolved_keys.append(matched_key)
             else:
-                new_key = f"ctx_{uuid.uuid4().hex}"
-                await self._context_store.aadd_context(new_key, vector)
-                if not self._custom_vector_store_active:
-                    new_contexts_to_save.append((new_key, vector))
-                resolved_keys.append(new_key)
+                is_outlier = False
+                if self.outlier_threshold is not None:
+                    closest_any_key = await self._context_store.aget_nearest_context(
+                        query_vector=vector,
+                        similarity_threshold=-2.0,
+                    )
+                    if closest_any_key is not None:
+                        in_distribution_key = (
+                            await self._context_store.aget_nearest_context(
+                                query_vector=vector,
+                                similarity_threshold=self.outlier_threshold,
+                            )
+                        )
+                        if in_distribution_key is None:
+                            is_outlier = True
+
+                if is_outlier:
+                    resolved_keys.append("__outlier_fallback__")
+                else:
+                    new_key = f"ctx_{uuid.uuid4().hex}"
+                    await self._context_store.aadd_context(new_key, vector)
+                    if not self._custom_vector_store_active:
+                        new_contexts_to_save.append((new_key, vector))
+                    resolved_keys.append(new_key)
 
         if new_contexts_to_save:
             if hasattr(self.storage, "asave_vectors"):
@@ -3077,8 +3291,12 @@ class AsyncBayesianRouter:
     ) -> List[str]:
         resolved_candidates = candidates if candidates is not None else self.candidates
         if resolved_candidates is None:
-            raise ValueError("Must provide 'candidates' either at initialization or when routing")
-        results = await self.aroute_batch_with_trace(contexts, candidates=resolved_candidates)
+            raise ValueError(
+                "Must provide 'candidates' either at initialization or when routing"
+            )
+        results = await self.aroute_batch_with_trace(
+            contexts, candidates=resolved_candidates
+        )
         return [candidate for candidate, _ in results]
 
     async def aroute_batch_with_trace(
@@ -3088,7 +3306,9 @@ class AsyncBayesianRouter:
     ) -> List[Tuple[str, str]]:
         resolved_candidates = candidates if candidates is not None else self.candidates
         if resolved_candidates is None:
-            raise ValueError("Must provide 'candidates' either at initialization or when routing")
+            raise ValueError(
+                "Must provide 'candidates' either at initialization or when routing"
+            )
         candidates = resolved_candidates
 
         if not candidates:
@@ -3113,6 +3333,27 @@ class AsyncBayesianRouter:
                 results = []
                 for idx, context_key in enumerate(context_keys):
                     context_text = contexts[idx]
+                    if context_key == "__outlier_fallback__":
+                        if self.outlier_fallback_behavior == "raise":
+                            raise OutlierContextError(
+                                "Incoming context vector is an outlier."
+                            )
+                        outlier_choice = (
+                            self.fallback_candidate
+                            if (
+                                self.fallback_candidate
+                                and self.fallback_candidate in candidates
+                            )
+                            else candidates[0]
+                        )
+                        trace_id = self._generate_trace_id(
+                            "__outlier_fallback__", outlier_choice
+                        )
+                        await self.storage.log_selection(
+                            trace_id, "__outlier_fallback__", outlier_choice
+                        )
+                        results.append((outlier_choice, trace_id))
+                        continue
                     best_candidate = None
                     highest_sample = -1.0
 
@@ -3206,6 +3447,27 @@ class AsyncBayesianRouter:
                 for idx, x_seq in enumerate(vectors):
                     x_c = np.array(x_seq, dtype=np.float32)
                     context_key = context_keys[idx]
+                    if context_key == "__outlier_fallback__":
+                        if self.outlier_fallback_behavior == "raise":
+                            raise OutlierContextError(
+                                "Incoming context vector is an outlier."
+                            )
+                        outlier_choice = (
+                            self.fallback_candidate
+                            if (
+                                self.fallback_candidate
+                                and self.fallback_candidate in candidates
+                            )
+                            else candidates[0]
+                        )
+                        trace_id = self._generate_trace_id(
+                            "__outlier_fallback__", outlier_choice
+                        )
+                        await self.storage.log_selection(
+                            trace_id, "__outlier_fallback__", outlier_choice
+                        )
+                        results.append((outlier_choice, trace_id))
+                        continue
 
                     theta_sample = (
                         _sample_theta(
@@ -3273,9 +3535,9 @@ class AsyncBayesianRouter:
                     )
                 else:
                     for candidate_name in candidates:
-                        tool_params[candidate_name] = (
-                            await self.storage.aget_linear_params(candidate_name)
-                        )
+                        tool_params[
+                            candidate_name
+                        ] = await self.storage.aget_linear_params(candidate_name)
 
                 context_keys = await self._resolve_context_keys(contexts)
                 results = []
@@ -3286,6 +3548,27 @@ class AsyncBayesianRouter:
                     d_aug = d + 1
                     context_key = context_keys[idx]
                     context_text = contexts[idx]
+                    if context_key == "__outlier_fallback__":
+                        if self.outlier_fallback_behavior == "raise":
+                            raise OutlierContextError(
+                                "Incoming context vector is an outlier."
+                            )
+                        outlier_choice = (
+                            self.fallback_candidate
+                            if (
+                                self.fallback_candidate
+                                and self.fallback_candidate in candidates
+                            )
+                            else candidates[0]
+                        )
+                        trace_id = self._generate_trace_id(
+                            "__outlier_fallback__", outlier_choice
+                        )
+                        await self.storage.log_selection(
+                            trace_id, "__outlier_fallback__", outlier_choice
+                        )
+                        results.append((outlier_choice, trace_id))
+                        continue
 
                     best_candidate = None
                     highest_score = -float("inf")
@@ -3349,6 +3632,8 @@ class AsyncBayesianRouter:
 
                 return results
 
+        except OutlierContextError:
+            raise
         except Exception as e:
             logger.exception(
                 "AsyncBayesianRouter batch routing failed. Triggering fail-safe fallback."
@@ -3477,7 +3762,9 @@ class AsyncBayesianRouter:
                     )
                 await self.storage.decay_and_update_batch(clustering_updates)
             elif self.hybrid:
-                hybrid_updates: List[Tuple[str, float, float, np.ndarray, float, float, bool]] = []
+                hybrid_updates: List[
+                    Tuple[str, float, float, np.ndarray, float, float, bool]
+                ] = []
                 for fb in prepared_feedbacks:
                     candidate_name = str(fb["candidate_name"])
                     reward_val = cast(float, fb["reward_val"])
@@ -3527,7 +3814,9 @@ class AsyncBayesianRouter:
                 await self.storage.adecay_and_update_linear_batch(hybrid_updates)
 
             else:
-                linear_updates: List[Tuple[str, float, float, np.ndarray, float, float, bool]] = []
+                linear_updates: List[
+                    Tuple[str, float, float, np.ndarray, float, float, bool]
+                ] = []
                 for fb in prepared_feedbacks:
                     candidate_name = str(fb["candidate_name"])
                     reward_val = cast(float, fb["reward_val"])
@@ -3609,7 +3898,9 @@ class AsyncBayesianRouter:
         """
         resolved_candidates = candidates if candidates is not None else self.candidates
         if resolved_candidates is None:
-            raise ValueError("Must provide 'candidates' either at initialization or when routing")
+            raise ValueError(
+                "Must provide 'candidates' either at initialization or when routing"
+            )
 
         chosen_candidate, trace_id = await self.aroute_with_trace(
             context_text=context_text,

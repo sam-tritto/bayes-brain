@@ -17,6 +17,7 @@ from bayesian_cortex.embeddings import (
 from bayesian_cortex.exceptions import (
     BayesianCortexError,
     EmbeddingError,
+    OutlierContextError,
     TamperDetectedError,
 )
 from bayesian_cortex.mcp_server import create_mcp_server
@@ -44,6 +45,7 @@ from bayesian_cortex.storage import (
 
 try:
     import importlib.metadata as _metadata
+
     __version__ = _metadata.version("bayesian_cortex")
 except Exception:
     __version__ = "0.1.3"
@@ -83,4 +85,5 @@ __all__ = [
     "BayesianCortexError",
     "TamperDetectedError",
     "EmbeddingError",
+    "OutlierContextError",
 ]

@@ -75,9 +75,9 @@ async def test_sqlite_concurrency_stress_clustering():
                 alpha, beta = await storage.get_candidate_params(resolved_key, cand)
                 total_alpha_diff += alpha - 1.0
 
-        assert (
-            total_alpha_diff == 1000.0
-        ), f"Expected total alpha difference of 1000.0, got {total_alpha_diff}"
+        assert total_alpha_diff == 1000.0, (
+            f"Expected total alpha difference of 1000.0, got {total_alpha_diff}"
+        )
 
         await storage.close()
 

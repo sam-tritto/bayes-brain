@@ -1,7 +1,9 @@
-import pytest
 from typing import Sequence
-from bayesian_cortex.router import BayesianRouter, AsyncBayesianRouter
-from bayesian_cortex.storage import InMemoryStorage, AsyncInMemoryStorage
+
+import pytest
+
+from bayesian_cortex.router import AsyncBayesianRouter, BayesianRouter
+from bayesian_cortex.storage import AsyncInMemoryStorage, InMemoryStorage
 
 
 class MockEmbedder:
@@ -29,7 +31,7 @@ def test_hierarchical_init_sync():
         candidates=["coder_subagent", "research_subagent"],
         children={
             "coder_subagent": child_cfg,
-        }
+        },
     )
 
     assert root.candidates == ["coder_subagent", "research_subagent"]
@@ -59,8 +61,8 @@ def test_hierarchical_from_config_sync():
             "research_subagent": {
                 "mode": "clustering",
                 "candidates": ["tool_search", "tool_wiki"],
-            }
-        }
+            },
+        },
     }
 
     root = BayesianRouter.from_config(config)
@@ -110,7 +112,7 @@ def test_route_hierarchical_and_feedback_sync():
                 "mode": "clustering",
                 "candidates": ["tool_python", "tool_git"],
             }
-        }
+        },
     }
 
     # Seed parent router so it consistently chooses "coder_subagent"
@@ -147,7 +149,9 @@ def test_route_hierarchical_and_feedback_sync():
     root.feedback_by_trace(child_trace_id, success=True)
 
     # The child router should have updated parameters in child storage
-    c_alpha, c_beta = child_router.storage.get_candidate_params(child_ctx_key, child_candidate)
+    c_alpha, c_beta = child_router.storage.get_candidate_params(
+        child_ctx_key, child_candidate
+    )
     assert c_alpha > 1.0
 
 
@@ -167,7 +171,7 @@ async def test_hierarchical_init_async():
         candidates=["coder_subagent", "research_subagent"],
         children={
             "coder_subagent": child_cfg,
-        }
+        },
     )
 
     assert root.candidates == ["coder_subagent", "research_subagent"]
@@ -197,8 +201,8 @@ async def test_hierarchical_from_config_async():
             "research_subagent": {
                 "mode": "clustering",
                 "candidates": ["tool_search", "tool_wiki"],
-            }
-        }
+            },
+        },
     }
 
     root = AsyncBayesianRouter.from_config(config)
@@ -248,7 +252,7 @@ async def test_route_hierarchical_and_feedback_async():
                 "mode": "clustering",
                 "candidates": ["tool_python", "tool_git"],
             }
-        }
+        },
     }
 
     root = AsyncBayesianRouter.from_config(config)
@@ -282,5 +286,7 @@ async def test_route_hierarchical_and_feedback_async():
 
     await root.afeedback_by_trace(child_trace_id, success=True)
 
-    c_alpha, c_beta = await child_router.storage.get_candidate_params(child_ctx_key, child_candidate)
+    c_alpha, c_beta = await child_router.storage.get_candidate_params(
+        child_ctx_key, child_candidate
+    )
     assert c_alpha > 1.0

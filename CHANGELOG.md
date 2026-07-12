@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Epistemic Drift / Vector Space Outliers**: Added OOD context outlier detection using cosine similarity threshold matching against historical context clusters. Outliers route to a safe fallback candidate or raise `OutlierContextError` without polluting the database with single-use context clusters.
 - **LangSmith Integration Guide**: Documented patterns for dynamic trace enrichment (bandit state metadata and tags) and automated closed-loop feedback pipelines via LangSmith.
 - **Hierarchical/Nested Routing**: Natively support nested parent-child configuration schemas out of the box in `BayesianRouter` and `AsyncBayesianRouter`. Added support for defining children configurations during initialization or via a new `from_config` classmethod.
 - **Cascading Feedback Delegation**: `feedback_by_trace` and `afeedback_by_trace` now automatically detect if a trace belongs to a child router in the hierarchy and delegate the feedback/updates downstream.

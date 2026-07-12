@@ -723,7 +723,7 @@ class VectorContextStore:
                     [self._contexts[k] for k in self._keys_list], dtype=np.float32
                 )
                 norms = np.linalg.norm(self._matrix, axis=1)
-                self._zero_norm_mask = (norms == 0.0)
+                self._zero_norm_mask = norms == 0.0
                 norms[self._zero_norm_mask] = 1.0
                 self._norms = norms
 
@@ -954,7 +954,7 @@ class AsyncVectorContextStore:
                     [self._contexts[k] for k in self._keys_list], dtype=np.float32
                 )
                 norms = np.linalg.norm(self._matrix, axis=1)
-                self._zero_norm_mask = (norms == 0.0)
+                self._zero_norm_mask = norms == 0.0
                 norms[self._zero_norm_mask] = 1.0
                 self._norms = norms
 
@@ -1185,7 +1185,9 @@ class AnthropicEmbedder:
                 f"Anthropic API request failed with status {e.code}: {err_body}"
             ) from e
         except Exception as e:
-            raise EmbeddingError(f"Failed to communicate with Anthropic API: {e}") from e
+            raise EmbeddingError(
+                f"Failed to communicate with Anthropic API: {e}"
+            ) from e
 
     async def aembed_query(self, text: str) -> Sequence[float]:
         if self.client is not None:
@@ -1247,7 +1249,9 @@ class AnthropicEmbedder:
                 f"Anthropic API request failed with status {e.response.status_code}: {e.response.text}"
             ) from e
         except Exception as e:
-            raise EmbeddingError(f"Failed to communicate with Anthropic API: {e}") from e
+            raise EmbeddingError(
+                f"Failed to communicate with Anthropic API: {e}"
+            ) from e
 
     def embed_queries(self, texts: List[str]) -> List[Sequence[float]]:
         if not texts:
@@ -1304,7 +1308,9 @@ class AnthropicEmbedder:
                 f"Anthropic API request failed with status {e.code}: {err_body}"
             ) from e
         except Exception as e:
-            raise EmbeddingError(f"Failed to communicate with Anthropic API: {e}") from e
+            raise EmbeddingError(
+                f"Failed to communicate with Anthropic API: {e}"
+            ) from e
 
     async def aembed_queries(self, texts: List[str]) -> List[Sequence[float]]:
         if not texts:
@@ -1371,7 +1377,9 @@ class AnthropicEmbedder:
                 f"Anthropic API request failed with status {e.response.status_code}: {e.response.text}"
             ) from e
         except Exception as e:
-            raise EmbeddingError(f"Failed to communicate with Anthropic API: {e}") from e
+            raise EmbeddingError(
+                f"Failed to communicate with Anthropic API: {e}"
+            ) from e
 
 
 class CohereEmbedder:
@@ -1812,7 +1820,9 @@ class LlamaCppEmbedder:
                 f"llama.cpp API request failed with status {e.code}: {err_body}"
             ) from e
         except Exception as e:
-            raise EmbeddingError(f"Failed to communicate with llama.cpp API: {e}") from e
+            raise EmbeddingError(
+                f"Failed to communicate with llama.cpp API: {e}"
+            ) from e
 
     async def _acall_raw_fallback(self, texts: List[str]) -> List[Sequence[float]]:
         try:
@@ -1889,7 +1899,9 @@ class LlamaCppEmbedder:
                 f"llama.cpp API request failed with status {e.response.status_code}: {e.response.text}"
             ) from e
         except Exception as e:
-            raise EmbeddingError(f"Failed to communicate with llama.cpp API: {e}") from e
+            raise EmbeddingError(
+                f"Failed to communicate with llama.cpp API: {e}"
+            ) from e
 
     def embed_queries(self, texts: List[str]) -> List[Sequence[float]]:
         if not texts:
@@ -1932,7 +1944,9 @@ class LlamaCppEmbedder:
                 f"llama.cpp API request failed with status {e.code}: {err_body}"
             ) from e
         except Exception as e:
-            raise EmbeddingError(f"Failed to communicate with llama.cpp API: {e}") from e
+            raise EmbeddingError(
+                f"Failed to communicate with llama.cpp API: {e}"
+            ) from e
 
     async def aembed_queries(self, texts: List[str]) -> List[Sequence[float]]:
         if not texts:
@@ -1978,4 +1992,6 @@ class LlamaCppEmbedder:
                 f"llama.cpp API request failed with status {e.response.status_code}: {e.response.text}"
             ) from e
         except Exception as e:
-            raise EmbeddingError(f"Failed to communicate with llama.cpp API: {e}") from e
+            raise EmbeddingError(
+                f"Failed to communicate with llama.cpp API: {e}"
+            ) from e

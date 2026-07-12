@@ -730,5 +730,6 @@ class TestFeedbackStrictMode:
 
 def test_version_exposure():
     from bayesian_cortex import __version__
+
     assert isinstance(__version__, str)
     assert len(__version__.split(".")) >= 2

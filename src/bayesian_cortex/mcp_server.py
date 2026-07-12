@@ -274,13 +274,13 @@ def generate_beta_pdf_svg(
                 f'<text x="{legend_left + 18}" y="{y_pos + 10}" fill="#e5e7eb" font-size="11" font-weight="bold">{candidate_name}</text>'
             )
             svg_elements.append(
-                f'<text x="{legend_left + 18}" y="{y_pos + 22}" fill="#9ca3af" font-size="9">Beta({alpha:.1f}, {beta:.1f}) | μ={mean*100:.1f}%</text>'
+                f'<text x="{legend_left + 18}" y="{y_pos + 22}" fill="#9ca3af" font-size="9">Beta({alpha:.1f}, {beta:.1f}) | μ={mean * 100:.1f}%</text>'
             )
 
         svg_elements.append("</svg>")
         return "\n".join(svg_elements)
     except Exception as e:
-        return f'<svg viewBox="0 0 {width} {height}" width="100%" height="{height}" xmlns="http://www.w3.org/2000/svg" style="background-color: #111827;"><text x="{width/2}" y="{height/2}" fill="#ef4444" text-anchor="middle">Error rendering SVG: {str(e)}</text></svg>'
+        return f'<svg viewBox="0 0 {width} {height}" width="100%" height="{height}" xmlns="http://www.w3.org/2000/svg" style="background-color: #111827;"><text x="{width / 2}" y="{height / 2}" fill="#ef4444" text-anchor="middle">Error rendering SVG: {str(e)}</text></svg>'
 
 
 def generate_history_svg(
@@ -290,7 +290,9 @@ def generate_history_svg(
     Generate SVG plotting the moving average success rate over time.
     """
     try:
-        candidate_rewards: Dict[str, List[float]] = {t: [] for t in available_candidates}
+        candidate_rewards: Dict[str, List[float]] = {
+            t: [] for t in available_candidates
+        }
         history_points = []
 
         for idx, log in enumerate(logs):
@@ -405,13 +407,13 @@ def generate_history_svg(
                 f'<text x="{legend_left + 18}" y="{y_pos + 10}" fill="#e5e7eb" font-size="11" font-weight="bold">{candidate_name}</text>'
             )
             svg_elements.append(
-                f'<text x="{legend_left + 18}" y="{y_pos + 22}" fill="#9ca3af" font-size="9">MA(10): {current_avg*100:.1f}% | Total: {total_selections}</text>'
+                f'<text x="{legend_left + 18}" y="{y_pos + 22}" fill="#9ca3af" font-size="9">MA(10): {current_avg * 100:.1f}% | Total: {total_selections}</text>'
             )
 
         svg_elements.append("</svg>")
         return "\n".join(svg_elements)
     except Exception as e:
-        return f'<svg viewBox="0 0 {width} {height}" width="100%" height="{height}" xmlns="http://www.w3.org/2000/svg" style="background-color: #111827;"><text x="{width/2}" y="{height/2}" fill="#ef4444" text-anchor="middle">Error rendering SVG: {str(e)}</text></svg>'
+        return f'<svg viewBox="0 0 {width} {height}" width="100%" height="{height}" xmlns="http://www.w3.org/2000/svg" style="background-color: #111827;"><text x="{width / 2}" y="{height / 2}" fill="#ef4444" text-anchor="middle">Error rendering SVG: {str(e)}</text></svg>'
 
 
 def create_mcp_server(

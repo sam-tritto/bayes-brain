@@ -476,6 +476,38 @@ For production use-cases, the SQLite storage backends ([SQLiteStorage](file:///U
 ### 🔏 Robust Hashed Exact Matching Fallbacks
 When operating without an embedder, or if API embedder requests fail, the router normalizes the context (stripping whitespace) and hashes the string using SHA-256 (prefixed with `hash_`). This guarantees a short, fixed-length context key and prevents key matching fragility due to whitespace differences.
 
+### 🌐 Epistemic Drift & Vector Space Outliers (OOD Guardrails)
+When an incoming prompt is embedded, its maximum cosine similarity to any historical cluster is evaluated. If it falls below a configurable `outlier_threshold` (e.g., `0.4`), the router flags it as an out-of-distribution (OOD) outlier.
+
+This provides two critical advantages in production:
+1. **Database Hygiene**: Prevents database bloat caused by system noise or junk queries, as OOD prompts bypass database context creation entirely.
+2. **Safe Routing**: Bypasses the multi-armed bandit exploration loop (which would otherwise execute random exploration on a newly spawned cluster) and either routes directly to a safe fallback candidate or raises an exception.
+
+```python
+from bayesian_cortex import BayesianRouter
+from bayesian_cortex.exceptions import OutlierContextError
+
+router = BayesianRouter(
+    storage_backend="sqlite",
+    embedder=embedder,
+    outlier_threshold=0.4,
+    fallback_candidate="safe_general_arm",
+    outlier_fallback_behavior="route_to_fallback"  # Options: "route_to_fallback" or "raise"
+)
+
+try:
+    # If the prompt is completely alien to anything the router has indexed:
+    choice, trace_id = router.route_with_trace(
+        context_text="what is the velocity of an unladen swallow?",
+        candidates=["sql_expert", "python_expert", "safe_general_arm"]
+    )
+    # choice is routed directly to "safe_general_arm"
+except OutlierContextError:
+    # Triggered if outlier_fallback_behavior="raise"
+    pass
+```
+
+
 ### 🧠 Automated RAG Routing & Feedback Loops (Memory)
 
 RAG routing requires evaluating whether a given knowledge base or retrieval strategy succeeded. Because RAG fails silently (returning irrelevant noise or hallucinations rather than throwing errors), BayesianCortex provides helper utilities to automate feedback loops and handle direct user UI feedback (such as Thumbs Up/Down components).

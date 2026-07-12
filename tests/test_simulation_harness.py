@@ -186,28 +186,28 @@ def test_beta_binomial_adaptation():
     # Assertions
     # With decay_factor = 1.0, the router has accumulated 4000+ successes for arm_0.
     # It takes a substantial number of steps to decay the large counts (usually >800 steps).
-    assert (
-        results[1.0] == -1 or results[1.0] > 800
-    ), f"Decay factor 1.0 adapted unexpectedly fast: {results[1.0]} steps"
+    assert results[1.0] == -1 or results[1.0] > 800, (
+        f"Decay factor 1.0 adapted unexpectedly fast: {results[1.0]} steps"
+    )
 
     # With decay_factor = 0.99, effective window is ~100 steps. It should adapt quickly.
-    assert (
-        0 < results[0.99] < 500
-    ), f"Decay factor 0.99 adaptation took too long: {results[0.99]} steps"
+    assert 0 < results[0.99] < 500, (
+        f"Decay factor 0.99 adaptation took too long: {results[0.99]} steps"
+    )
 
     # With decay_factor = 0.95, effective window is ~20 steps. It should adapt extremely quickly.
-    assert (
-        0 < results[0.95] < 300
-    ), f"Decay factor 0.95 adaptation took too long: {results[0.95]} steps"
+    assert 0 < results[0.95] < 300, (
+        f"Decay factor 0.95 adaptation took too long: {results[0.95]} steps"
+    )
 
     # Verify that decaying models adapted strictly faster than the non-decaying model (decay_factor = 1.0)
     if results[1.0] != -1:
-        assert (
-            results[0.99] < results[1.0]
-        ), f"Decay factor 0.99 ({results[0.99]}) was not faster than 1.0 ({results[1.0]})"
-        assert (
-            results[0.95] < results[1.0]
-        ), f"Decay factor 0.95 ({results[0.95]}) was not faster than 1.0 ({results[1.0]})"
+        assert results[0.99] < results[1.0], (
+            f"Decay factor 0.99 ({results[0.99]}) was not faster than 1.0 ({results[1.0]})"
+        )
+        assert results[0.95] < results[1.0], (
+            f"Decay factor 0.95 ({results[0.95]}) was not faster than 1.0 ({results[1.0]})"
+        )
 
 
 def test_linear_bandits_stability_and_drift():
@@ -227,9 +227,9 @@ def test_linear_bandits_stability_and_drift():
         )
 
         # Verify adaptation
-        assert (
-            0 < crossover < 1500
-        ), f"Linear mode {mode} failed to adapt timely: {crossover} steps"
+        assert 0 < crossover < 1500, (
+            f"Linear mode {mode} failed to adapt timely: {crossover} steps"
+        )
 
         # Verify covariance stability for all candidates that have parameters
         assert len(final_params) > 0, "No linear parameters found in storage"
@@ -240,23 +240,23 @@ def test_linear_bandits_stability_and_drift():
             assert reward_vector.shape == (6,)
 
             # Ensure no NaNs or Infinities
-            assert np.all(
-                np.isfinite(precision)
-            ), f"NaN/Inf precision found for {candidate} in {mode}"
-            assert np.all(
-                np.isfinite(reward_vector)
-            ), f"NaN/Inf reward vector found for {candidate} in {mode}"
+            assert np.all(np.isfinite(precision)), (
+                f"NaN/Inf precision found for {candidate} in {mode}"
+            )
+            assert np.all(np.isfinite(reward_vector)), (
+                f"NaN/Inf reward vector found for {candidate} in {mode}"
+            )
 
             # Ensure diagonal precision elements do not diverge or drop below lambda (1.0)
-            assert np.all(
-                precision >= 1.0
-            ), f"Precision dropped below lambda for {candidate} in {mode}"
+            assert np.all(precision >= 1.0), (
+                f"Precision dropped below lambda for {candidate} in {mode}"
+            )
 
             # Theoretical bound check: under decay_factor=0.99, lambda=1.0, and |x| <= 1.5,
             # precision should stabilize below ~301.0. Let's assert a safe margin of 500.0.
-            assert np.all(
-                precision <= 500.0
-            ), f"Precision diverged/blew up for {candidate} in {mode}: {precision}"
+            assert np.all(precision <= 500.0), (
+                f"Precision diverged/blew up for {candidate} in {mode}: {precision}"
+            )
 
 
 if __name__ == "__main__":
