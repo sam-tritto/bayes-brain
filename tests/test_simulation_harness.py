@@ -172,6 +172,7 @@ def test_beta_binomial_adaptation():
     Verify the adaptation speed of Beta-Binomial router under non-stationary drift.
     Ensures that decay_factor < 1.0 adapts significantly faster than decay_factor = 1.0.
     """
+    np.random.seed(42)
     print("\n--- Running Beta-Binomial (Context Clustering) Simulation ---")
 
     # Test multiple decay factors
@@ -215,6 +216,7 @@ def test_linear_bandits_stability_and_drift():
     Verify LinTS and LinUCB stability and adaptation under continuous noise
     with O(d) diagonal covariance approximation.
     """
+    np.random.seed(42)
     print("\n--- Running Linear Bandits (LinTS / LinUCB) Simulation ---")
 
     for mode in ["lints", "linucb"]:
